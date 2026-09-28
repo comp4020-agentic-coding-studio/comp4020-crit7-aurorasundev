@@ -11,6 +11,7 @@ const baseUrl = inject("baseUrl");
 const dbPath = inject("dbPath");
 const A = "student-a";
 const B = "student-b";
+const B_NUMBER = "u9900102";
 
 type Page = { status: number; url: string; doc: Document; html: string; dom: JSDOM };
 
@@ -71,9 +72,11 @@ async function teamPlanWithInvite() {
   expect((await addOption(A, team, h(13), h(16), `chifley-2-3|${h(13)}|${h(16)}`)).error).toBeNull();
   const planId = await currentPlanId(A);
   const review = await get(`/plans/${planId}`);
-  const segmentId = review.doc.querySelector('form[action$="/invite"] input[name="segmentId"]')?.getAttribute("value") ?? "";
+  const segmentId = review.doc.querySelector('form.lookup input[name="for"]')?.getAttribute("value") ?? "";
   expect(segmentId).not.toBe("");
-  const sent = await post(`/api/plans/${planId}/invite`, { segmentId, inviteeId: B, back: `/plans/${planId}` });
+  const sent = await post(`/api/plans/${planId}/invite`, {
+    segmentId, studentNumber: B_NUMBER, confirmed: "yes", back: `/plans/${planId}`,
+  });
   expect(sent.error).toBeNull();
   const inv = db().prepare("select id from invitations where segment_id = ?").get(segmentId) as { id: string };
   return { planId, segmentId, invitationId: inv.id, team };
@@ -246,7 +249,7 @@ describe("collaboration", () => {
 
     const resend = await post(`/api/plans/${planId}/invite`, {
       segmentId: (db().prepare("select segment_id from invitations where id = ?").get(invitationId) as { segment_id: string }).segment_id,
-      inviteeId: B, back: "/",
+      studentNumber: B_NUMBER, confirmed: "yes", back: "/",
     });
     expect(resend.error).toContain("already pending");
 
@@ -302,7 +305,9 @@ describe("collaboration", () => {
     expect((await post(`/api/invitations/${invitationId}/respond`, { decision: "decline", back: "/" }, B)).error).toBeNull();
     expect((await get(`/plans/${planId}`)).doc.querySelector(".table")?.textContent).toContain("Declined");
 
-    expect((await post(`/api/plans/${planId}/invite`, { segmentId, inviteeId: B, back: "/" })).error).toBeNull();
+    expect(
+      (await post(`/api/plans/${planId}/invite`, { segmentId, studentNumber: B_NUMBER, confirmed: "yes", back: "/" })).error,
+    ).toBeNull();
     const second = db().prepare("select id from invitations where segment_id = ? and status = 'pending'").get(segmentId) as { id: string };
     const conn = db();
     conn.prepare("update invitations set created_at_ms = ? where id = ?").run(Date.now() - 31 * 60_000, second.id);
@@ -314,6 +319,97 @@ describe("collaboration", () => {
     expect(page.doc.querySelector(".table")?.textContent).toContain("Expired");
     const buttons = [...(await get(`/invitations/${second.id}`, B)).doc.querySelectorAll(".actions button")];
     expect(buttons.every((b) => b.hasAttribute("disabled"))).toBe(true);
+  });
+});
+
+describe("teammate lookup by student number", () => {
+  async function draftTeamPlan() {
+    const { team } = await scenarioDates();
+    await newPlan(A, team);
+    await addOption(A, team, h(13), h(16), `chifley-2-3|${h(13)}|${h(16)}`);
+    const planId = await currentPlanId(A);
+    const review = await get(`/plans/${planId}`);
+    const segmentId = review.doc.querySelector('form.lookup input[name="for"]')?.getAttribute("value") ?? "";
+    return { planId, segmentId };
+  }
+
+  it("finds a student by number and asks for confirmation before sending", async () => {
+    const { planId, segmentId } = await draftTeamPlan();
+    const found = await get(`/plans/${planId}?for=${segmentId}&lookup=U9900103`);
+    expect(found.doc.querySelector(".found")?.textContent).toContain("Priya Nair");
+    const dialog = found.doc.querySelector(`#invite-dlg-${segmentId}`)?.textContent ?? "";
+    expect(dialog).toContain("Priya Nair");
+    expect(dialog).toContain("u9900103");
+    expect(found.doc.querySelector(`#invite-dlg-${segmentId} button[name="confirmed"][value="yes"]`)).toBeTruthy();
+
+    const unconfirmed = await post(`/api/plans/${planId}/invite`, { segmentId, studentNumber: "u9900103", back: "/" });
+    expect(unconfirmed.error).toContain("Confirm that Priya Nair (u9900103)");
+    const sent = await post(`/api/plans/${planId}/invite`, { segmentId, studentNumber: "u9900103", confirmed: "yes", back: "/" });
+    expect(sent.notice).toContain("Priya Nair (u9900103)");
+    const row = db().prepare("select invitee_id from invitations where segment_id = ?").get(segmentId) as { invitee_id: string };
+    expect(row.invitee_id).toBe("student-c");
+  });
+
+  it("explains unknown numbers and refuses your own", async () => {
+    const { planId, segmentId } = await draftTeamPlan();
+    const missing = await get(`/plans/${planId}?for=${segmentId}&lookup=u1234567`);
+    expect(missing.doc.querySelector(".lookup [role=alert]")?.textContent).toContain("No student with number u1234567");
+    expect(missing.doc.querySelector(".found")).toBeNull();
+    const own = await get(`/plans/${planId}?for=${segmentId}&lookup=u9900101`);
+    expect(own.doc.querySelector(".lookup [role=alert]")?.textContent).toContain("your own student number");
+    expect((await post(`/api/plans/${planId}/invite`, { segmentId, studentNumber: "u0000000", confirmed: "yes", back: "/" })).error).toContain("No student");
+    expect((await post(`/api/plans/${planId}/invite`, { segmentId, studentNumber: "u9900101", confirmed: "yes", back: "/" })).error).toContain("your own");
+  });
+});
+
+describe("cancelling confirmed bookings", () => {
+  async function confirmedTeamPlan() {
+    const { planId, invitationId, segmentId, team } = await teamPlanWithInvite();
+    await post(`/api/invitations/${invitationId}/respond`, { decision: "accept", back: "/" }, B);
+    expect((await post(`/api/plans/${planId}/confirm`, { back: "/" })).notice).toBe("Plan confirmed in this prototype.");
+    return { planId, segmentId, team };
+  }
+
+  it("a teammate cancels their own segment, freeing the room and their allowance", async () => {
+    const { planId, segmentId, team } = await confirmedTeamPlan();
+    expect((await post(`/api/plans/${planId}/cancel`, { scope: "segment", segmentId, back: "/" }, B)).error).toContain("Confirm the cancellation");
+    const outsider = await post(`/api/plans/${planId}/cancel`, { scope: "segment", segmentId, confirmed: "yes", back: "/" }, "student-c");
+    expect(outsider.error).toContain("Only the segment's booking owner");
+    const done = await post(`/api/plans/${planId}/cancel`, { scope: "segment", segmentId, confirmed: "yes", back: "/" }, B);
+    expect(done.notice).toContain("Booking cancelled");
+    expect(planBookings(planId)).toBe(1);
+
+    const review = await get(`/plans/${planId}`);
+    expect(review.doc.querySelector(".table")?.textContent).toContain("Cancelled");
+    const search = await get(`/search?date=${team}&from=13:00&until=16:00&people=4`);
+    expect(search.doc.querySelector('[data-room="chifley-2-3"] button[data-slot="900"]')).toBeTruthy();
+    const minutes = db().prepare("select count(*) as n from bookings where owner_id = ? and date = ?").get(B, team) as { n: number };
+    expect(minutes.n).toBe(0);
+  });
+
+  it("the organiser cancels the whole plan; nothing stays booked", async () => {
+    const { planId } = await confirmedTeamPlan();
+    expect((await post(`/api/plans/${planId}/cancel`, { scope: "plan", confirmed: "yes", back: "/" }, B)).error).toContain("Only the plan's organiser");
+    const done = await post(`/api/plans/${planId}/cancel`, { scope: "plan", confirmed: "yes", back: "/" });
+    expect(done.notice).toContain("Plan cancelled");
+    expect(planBookings(planId)).toBe(0);
+    const mine = await get("/my-plans");
+    expect(mine.doc.querySelector(".plan-card .status")?.textContent).toBe("Cancelled");
+    expect((await post(`/api/plans/${planId}/confirm`, { back: "/" })).error).toContain("cancelled");
+  });
+
+  it("drafts cannot be cancelled as bookings", async () => {
+    const { planId, segmentId } = await teamPlanWithInvite();
+    expect((await post(`/api/plans/${planId}/cancel`, { scope: "segment", segmentId, confirmed: "yes", back: "/" })).error).toContain("Only confirmed bookings");
+  });
+});
+
+describe("navigation", () => {
+  it("planner nav searches rooms and a home icon returns to library bookings", async () => {
+    const page = await get("/my-plans");
+    const search = [...page.doc.querySelectorAll(".main-nav a")].find((a) => a.textContent?.trim() === "Search rooms");
+    expect(search?.getAttribute("href")).toBe("/search");
+    expect(page.doc.querySelector('a.home-link[href="/"]')?.getAttribute("aria-label")).toBe("Library bookings home");
   });
 });
 

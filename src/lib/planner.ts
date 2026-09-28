@@ -224,6 +224,7 @@ export function minutesUntilExpiry(createdAtMs: number, nowMs: number): number {
 }
 
 export type SegmentStatus =
+  | "Cancelled"
   | "Confirmed"
   | "Assigned"
   | "Approved"
@@ -235,12 +236,14 @@ export type SegmentStatus =
 export function segmentStatus(
   input: {
     planConfirmed: boolean;
+    cancelled?: boolean;
     ownerId: string | null;
     organizerId: string;
     latestInvite?: { status: "pending" | "accepted" | "declined"; createdAtMs: number };
   },
   nowMs: number,
 ): SegmentStatus {
+  if (input.cancelled) return "Cancelled";
   if (input.planConfirmed) return "Confirmed";
   if (input.ownerId === input.organizerId) return "Assigned";
   if (input.ownerId) return "Approved";

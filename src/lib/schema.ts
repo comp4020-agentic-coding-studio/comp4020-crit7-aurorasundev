@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { index, int, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { index, int, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 // The schema is the ground truth for the database. To change it: edit here,
 // run `pnpm db:generate` to turn the diff into a migration under drizzle/,
@@ -10,11 +10,17 @@ import { index, int, sqliteTable, text } from "drizzle-orm/sqlite-core";
 // are minutes since local midnight. Availability is never stored: it is a
 // room's opening window minus its rows in `bookings`.
 
-export const demoUsers = sqliteTable("demo_users", {
-  id: text().primaryKey(),
-  name: text().notNull(),
-  sort: int().notNull(),
-});
+export const demoUsers = sqliteTable(
+  "demo_users",
+  {
+    id: text().primaryKey(),
+    name: text().notNull(),
+    // fictional uIDs in a range chosen not to look like real ANU numbers
+    studentNumber: text("student_number"),
+    sort: int().notNull(),
+  },
+  (t) => [uniqueIndex("demo_users_student_number_idx").on(t.studentNumber)],
+);
 
 export const libraries = sqliteTable("libraries", {
   id: text().primaryKey(),
@@ -44,9 +50,10 @@ export const plans = sqliteTable("plans", {
   reqStartMin: int("req_start_min").notNull(),
   reqEndMin: int("req_end_min").notNull(),
   people: int().notNull(),
-  // draft → confirmed. "Pending" and "Failed" are derived for display from
-  // invitations and last_error, so a failed plan stays an editable draft.
-  status: text({ enum: ["draft", "confirmed"] })
+  // draft → confirmed → cancelled. "Pending" and "Failed" are derived for
+  // display from invitations and last_error, so a failed plan stays an
+  // editable draft.
+  status: text({ enum: ["draft", "confirmed", "cancelled"] })
     .notNull()
     .default("draft"),
   lastError: text("last_error"),
@@ -70,6 +77,8 @@ export const planSegments = sqliteTable(
     endMin: int("end_min").notNull(),
     // null until a teammate accepts responsibility for the segment
     ownerId: text("owner_id").references(() => demoUsers.id),
+    // set when a confirmed segment's reservation is cancelled
+    cancelledAt: text("cancelled_at"),
   },
   (t) => [index("plan_segments_plan_idx").on(t.planId)],
 );

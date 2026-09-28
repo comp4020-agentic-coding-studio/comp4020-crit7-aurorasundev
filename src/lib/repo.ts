@@ -30,6 +30,12 @@ export function listUsers(): DemoUser[] {
   return db.select().from(demoUsers).orderBy(asc(demoUsers.sort)).all();
 }
 
+export function getUserByStudentNumber(studentNumber: string): DemoUser | undefined {
+  const normalised = studentNumber.trim().toLowerCase();
+  if (!/^u\d{7}$/.test(normalised)) return undefined;
+  return db.select().from(demoUsers).where(eq(demoUsers.studentNumber, normalised)).get();
+}
+
 export function getUser(id: string): DemoUser | undefined {
   return db.select().from(demoUsers).where(eq(demoUsers.id, id)).get();
 }
@@ -118,6 +124,7 @@ export type SegmentView = {
   status: SegmentStatus;
   invite?: Invitation & {
     inviteeName: string;
+    inviteeNumber: string;
     expired: boolean;
     minutesLeft: number;
   };
@@ -128,7 +135,7 @@ export type PlanView = {
   organizer: DemoUser;
   segments: SegmentView[];
   coverage: Coverage;
-  displayStatus: "Draft" | "Pending approval" | "Ready to confirm" | "Confirmed" | "Failed";
+  displayStatus: "Draft" | "Pending approval" | "Ready to confirm" | "Confirmed" | "Cancelled" | "Failed";
   canConfirm: boolean;
   blockers: string[];
   organizerMinutes: number;
@@ -149,6 +156,7 @@ export function planView(planId: string, nowMs: number = Date.now()): PlanView |
     .all();
   const invites = latestInvites(segRows.map((s) => s.id));
   const confirmed = plan.status === "confirmed";
+  const finished = plan.status !== "draft";
 
   const segments: SegmentView[] = segRows.flatMap((s) => {
     const room = byId.get(s.roomId);
@@ -164,7 +172,8 @@ export function planView(planId: string, nowMs: number = Date.now()): PlanView |
         ownerName: s.ownerId ? (users.get(s.ownerId)?.name ?? null) : null,
         status: segmentStatus(
           {
-            planConfirmed: confirmed,
+            planConfirmed: finished,
+            cancelled: plan.status === "cancelled" || s.cancelledAt !== null,
             ownerId: s.ownerId,
             organizerId: plan.organizerId,
             latestInvite: inv,
@@ -175,6 +184,7 @@ export function planView(planId: string, nowMs: number = Date.now()): PlanView |
           ? {
               ...inv,
               inviteeName: users.get(inv.inviteeId)?.name ?? inv.inviteeId,
+              inviteeNumber: users.get(inv.inviteeId)?.studentNumber ?? "",
               expired: inv.status === "pending" && isExpired(inv.createdAtMs, nowMs),
               minutesLeft: minutesUntilExpiry(inv.createdAtMs, nowMs),
             }
@@ -183,8 +193,9 @@ export function planView(planId: string, nowMs: number = Date.now()): PlanView |
     ];
   });
 
+  const active = segments.filter((s) => s.status !== "Cancelled");
   const cov = coverage(
-    segments.map((s) => ({ roomId: s.room.id, start: s.start, end: s.end })),
+    active.map((s) => ({ roomId: s.room.id, start: s.start, end: s.end })),
     byId,
     { start: plan.reqStartMin, end: plan.reqEndMin },
   );
@@ -199,7 +210,10 @@ export function planView(planId: string, nowMs: number = Date.now()): PlanView |
   }
 
   const pending = segments.some((s) => s.status === "Pending approval");
-  const displayStatus: PlanView["displayStatus"] = confirmed
+  const displayStatus: PlanView["displayStatus"] =
+    plan.status === "cancelled"
+      ? "Cancelled"
+      : confirmed
     ? "Confirmed"
     : plan.lastError
       ? "Failed"
@@ -212,7 +226,7 @@ export function planView(planId: string, nowMs: number = Date.now()): PlanView |
   const organizerMinutes =
     confirmedMinutes(plan.organizerId, plan.date) +
     segments
-      .filter((s) => s.ownerId === plan.organizerId && !confirmed)
+      .filter((s) => s.ownerId === plan.organizerId && !finished)
       .reduce((sum, s) => sum + (s.end - s.start), 0);
 
   return {
@@ -221,7 +235,7 @@ export function planView(planId: string, nowMs: number = Date.now()): PlanView |
     segments,
     coverage: cov,
     displayStatus,
-    canConfirm: !confirmed && blockers.length === 0,
+    canConfirm: !finished && blockers.length === 0,
     blockers,
     organizerMinutes,
   };
@@ -301,7 +315,7 @@ export function invitationView(id: string, nowMs: number = Date.now()): Invitati
       confirmedMinutes(invitee.id, plan.date) + Number(assignedInPlans?.total ?? 0),
     superseded:
       invitation.status === "pending" &&
-      (plan.status === "confirmed" || (seg.ownerId !== null && seg.ownerId !== invitee.id)),
+      (plan.status !== "draft" || (seg.ownerId !== null && seg.ownerId !== invitee.id)),
   };
 }
 

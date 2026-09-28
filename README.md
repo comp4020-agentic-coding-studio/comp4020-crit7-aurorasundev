@@ -25,13 +25,22 @@ to that library. The planner itself is at `/search`.
    short** instead of calling it a full match.
 2. **Three-hour team plan.** Choose *Three-hour team plan* and add the full
    match (Chifley 2.3, 13:00–16:00). You own the first two hours; the last hour
-   is over your daily limit, so review the plan and invite Alex Chen. Switch
+   is over your daily limit, so review the plan, search for Alex Chen's
+   student number (u9900102), check the name and number in the confirmation
+   dialog and send the invitation. Switch
    the header's **Demo student** to Alex Chen, accept the segment, switch back
    and **Confirm plan**. Reload: both reservations are there.
 3. **Conflict.** Repeat step 2, but as Alex Chen, before accepting, also
    start a new plan and confirm Chifley 2.3 14:00–15:00 for yourself. The
    organiser's confirmation then fails, names the clash and writes nothing:
    the pending invitation never held the room.
+
+4. **Cancel.** On a confirmed plan the organiser can cancel the whole plan,
+   and each booking owner can cancel their own segment. A dialog confirms
+   first; cancelling frees the room and the owner's daily allowance.
+
+Demo students (fictional): Jordan Lee u9900101, Alex Chen u9900102, Priya
+Nair u9900103, Tom Walker u9900104, Sofia Rossi u9900105.
 
 **Reset demo data** in the identity menu clears every plan so the stories can
 be shown again.

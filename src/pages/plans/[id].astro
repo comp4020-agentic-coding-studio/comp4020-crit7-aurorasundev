@@ -1,7 +1,7 @@
 ---
 import Base from "../../layouts/Base.astro";
 import type { SegmentStatus } from "../../lib/planner";
-import { listUsers, planView } from "../../lib/repo";
+import { getUserByStudentNumber, planView } from "../../lib/repo";
 import { fmtDate, fmtDuration, fmtRange, fmtTime } from "../../lib/time";
 
 const view = planView(Astro.params.id ?? "");
@@ -10,6 +10,7 @@ if (!view) Astro.response.status = 404;
 const me = Astro.locals.user;
 const back = Astro.url.pathname;
 const statusClass: Record<SegmentStatus, string> = {
+  Cancelled: "cancelled",
   Confirmed: "confirmed",
   Assigned: "assigned",
   Approved: "approved",
@@ -29,7 +30,6 @@ let isOrganizer = false;
 let needInvite: NonNullable<typeof view>["segments"] = [];
 let invited: NonNullable<typeof view>["segments"] = [];
 let pendingInvite: NonNullable<typeof view>["segments"] = [];
-let teammates: ReturnType<typeof listUsers> = [];
 let hours: number[] = [];
 const pct = (min: number) => ((Math.min(Math.max(min, range.start), range.end) - range.start) / (range.end - range.start)) * 100;
 
@@ -38,8 +38,10 @@ if (view) {
   isOrganizer = plan.organizerId === me.id;
   summary = {
     requested: coverage.requestedMin,
-    assigned: segments.filter((s) => s.ownerId === plan.organizerId).reduce((n, s) => n + s.end - s.start, 0),
-    awaiting: segments.filter((s) => !s.ownerId).reduce((n, s) => n + s.end - s.start, 0),
+    assigned: segments
+      .filter((s) => s.ownerId === plan.organizerId && s.status !== "Cancelled")
+      .reduce((n, s) => n + s.end - s.start, 0),
+    awaiting: segments.filter((s) => !s.ownerId && s.status !== "Cancelled").reduce((n, s) => n + s.end - s.start, 0),
   };
   const roomNames = [...new Set(segments.map((s) => s.room.name))];
   const length = hyphenated(coverage.requestedMin);
@@ -55,7 +57,6 @@ if (view) {
   needInvite = segments.filter((s) => ["Needs teammate", "Declined", "Expired"].includes(s.status));
   pendingInvite = segments.filter((s) => s.status === "Pending approval");
   invited = segments.filter((s) => s.invite);
-  teammates = listUsers().filter((u) => u.id !== plan.organizerId);
 }
 
 const ownerLabel = (s: NonNullable<typeof view>["segments"][number]) => {
@@ -63,9 +64,34 @@ const ownerLabel = (s: NonNullable<typeof view>["segments"][number]) => {
   if (s.status === "Pending approval") return "Awaiting teammate";
   return "Needs a teammate";
 };
-const breakAfter = new Map(view?.coverage.breaks.map((b) => [b.afterIndex, b]) ?? []);
+// coverage is computed over the segments still booked or planned, so its
+// break indexes refer to that list, not to cancelled rows
+const activeSegments = view?.segments.filter((s) => s.status !== "Cancelled") ?? [];
+const breakById = new Map(view?.coverage.breaks.map((b) => [activeSegments[b.afterIndex]?.id, b]) ?? []);
+const breakAfter = new Map(
+  (view?.segments ?? []).flatMap((s, i) => (breakById.has(s.id) ? [[i, breakById.get(s.id)!] as const] : [])),
+);
+
+// Teammate lookup: ?for=<segmentId>&lookup=<student number>
+const lookupFor = Astro.url.searchParams.get("for") ?? "";
+const lookupText = (Astro.url.searchParams.get("lookup") ?? "").trim();
+const lookupResult = lookupFor && lookupText ? getUserByStudentNumber(lookupText) : undefined;
+const lookupMessage =
+  !lookupFor || !lookupText
+    ? ""
+    : !lookupResult
+      ? /^u\d{7}$/i.test(lookupText)
+        ? `No student with number ${lookupText} was found in this prototype. Check the number and try again.`
+        : "Enter a student number in the form u1234567."
+      : lookupResult.id === me.id
+        ? "That's your own student number. Invite a teammate instead."
+        : "";
+const canCancel = (s: NonNullable<typeof view>["segments"][number]) =>
+  view?.plan.status === "confirmed" && s.status === "Confirmed" && (s.ownerId === me.id || view.plan.organizerId === me.id);
+const cancellable = view?.segments.filter(canCancel) ?? [];
+const showActions = !!view && ((isOrganizer && view.plan.status === "draft") || cancellable.length > 0);
 const blockClass = (s: NonNullable<typeof view>["segments"][number]) =>
-  s.ownerId === view?.plan.organizerId ? "own" : s.ownerId || s.status === "Pending approval" ? "team" : "open";
+  s.status === "Cancelled" ? "cancelled" : s.ownerId === view?.plan.organizerId ? "own" : s.ownerId || s.status === "Pending approval" ? "team" : "open";
 const inviteState = (s: NonNullable<typeof view>["segments"][number]) => {
   const inv = s.invite!;
   if (inv.status === "accepted") return { dot: "accepted", text: "Approved", extra: "" };
@@ -119,7 +145,7 @@ const inviteState = (s: NonNullable<typeof view>["segments"][number]) => {
             <p class="utility" style="margin:4px 0 0">
               Requested {fmtRange(view.plan.reqStartMin, view.plan.reqEndMin)} · {view.plan.people} people · usable discussion time{" "}
               {fmtDuration(view.coverage.usableMin)}
-              {view.coverage.shortfallMin > 0 && (
+              {view.coverage.shortfallMin > 0 && view.plan.status !== "cancelled" && (
                 <>
                   {" "}· <span class="short">{fmtDuration(view.coverage.shortfallMin)} short</span>
                 </>
@@ -167,6 +193,11 @@ const inviteState = (s: NonNullable<typeof view>["segments"][number]) => {
                     <div>
                       <span class={`status status--${statusClass[s.status]}`}>{s.status}</span>
                       <div class="it-owner">{ownerLabel(s)}</div>
+                      {canCancel(s) && (
+                        <button type="button" class="btn btn--link" data-confirm-dialog={`cancel-dlg-${s.id}`}>
+                          Cancel booking<span class="sr-only"> {s.room.name} {fmtRange(s.start, s.end)}</span>
+                        </button>
+                      )}
                     </div>
                     <span class="chevron chevron--right" aria-hidden="true" />
                   </li>
@@ -188,7 +219,7 @@ const inviteState = (s: NonNullable<typeof view>["segments"][number]) => {
                     <th scope="col">Room</th>
                     <th scope="col">Status</th>
                     <th scope="col">Booked by</th>
-                    {isOrganizer && view.plan.status !== "confirmed" && <th scope="col"><span class="sr-only">Actions</span></th>}
+                    {showActions && <th scope="col"><span class="sr-only">Actions</span></th>}
                   </tr>
                 </thead>
                 <tbody>
@@ -198,9 +229,14 @@ const inviteState = (s: NonNullable<typeof view>["segments"][number]) => {
                       <td>{s.room.name}</td>
                       <td><span class={`status status--${statusClass[s.status]}`}>{s.status}</span></td>
                       <td>{ownerLabel(s)}</td>
-                      {isOrganizer && view.plan.status !== "confirmed" && (
+                      {showActions && (
                         <td style="text-align:right">
-                          {!s.ownerId && s.status !== "Pending approval" && (
+                          {canCancel(s) && (
+                            <button type="button" class="btn btn--link" data-confirm-dialog={`cancel-dlg-${s.id}`}>
+                              Cancel booking<span class="sr-only"> {s.room.name} {fmtRange(s.start, s.end)}</span>
+                            </button>
+                          )}
+                          {isOrganizer && view.plan.status === "draft" && !s.ownerId && s.status !== "Pending approval" && (
                             <form method="post" action="/api/plans/segments" class="inline-form">
                               <input type="hidden" name="intent" value="take" />
                               <input type="hidden" name="segmentId" value={s.id} />
@@ -208,14 +244,16 @@ const inviteState = (s: NonNullable<typeof view>["segments"][number]) => {
                               <button class="btn btn--link">Take it myself</button>
                             </form>
                           )}{" "}
-                          <form method="post" action="/api/plans/segments" class="inline-form">
-                            <input type="hidden" name="intent" value="remove" />
-                            <input type="hidden" name="segmentId" value={s.id} />
-                            <input type="hidden" name="back" value={back} />
-                            <button class="btn btn--link">
-                              Remove<span class="sr-only"> {s.room.name} {fmtRange(s.start, s.end)}</span>
-                            </button>
-                          </form>
+                          {isOrganizer && view.plan.status === "draft" && (
+                            <form method="post" action="/api/plans/segments" class="inline-form">
+                              <input type="hidden" name="intent" value="remove" />
+                              <input type="hidden" name="segmentId" value={s.id} />
+                              <input type="hidden" name="back" value={back} />
+                              <button class="btn btn--link">
+                                Remove<span class="sr-only"> {s.room.name} {fmtRange(s.start, s.end)}</span>
+                              </button>
+                            </form>
+                          )}
                         </td>
                       )}
                     </tr>
@@ -223,7 +261,7 @@ const inviteState = (s: NonNullable<typeof view>["segments"][number]) => {
                 </tbody>
               </table>
             </div>
-            {isOrganizer && view.plan.status !== "confirmed" && (
+            {isOrganizer && view.plan.status === "draft" && (
               <p class="utility" style="margin-top:12px">
                 Need a different room or time? <a href={`/search?date=${view.plan.date}&from=${fmtTime(view.plan.reqStartMin)}&until=${fmtTime(view.plan.reqEndMin)}&people=${view.plan.people}`}>Search again</a>
               </p>
@@ -233,7 +271,7 @@ const inviteState = (s: NonNullable<typeof view>["segments"][number]) => {
 
         <aside class="rail" aria-label="Invitations and next step">
           <div class="rail__inner">
-            {view.plan.status !== "confirmed" && (
+            {view.plan.status === "draft" && (
               <section class="side-block" aria-labelledby="invite-heading">
                 <h2 id="invite-heading">Invite a teammate</h2>
                 {needInvite.length + pendingInvite.length === 0 && (
@@ -252,21 +290,81 @@ const inviteState = (s: NonNullable<typeof view>["segments"][number]) => {
                         <p>
                           Send an invitation for the remaining {fmtDuration(s.end - s.start)} ({fmtRange(s.start, s.end)}).
                         </p>
-                        {isOrganizer ? (
-                          <form method="post" action={`/api/plans/${view.plan.id}/invite`} class={pending ? "invite-form--pending" : undefined} data-once>
-                            <input type="hidden" name="segmentId" value={s.id} />
-                            <input type="hidden" name="back" value={back} />
-                            <label for={`teammate-${s.id}`}>Demo teammate</label>
-                            <select id={`teammate-${s.id}`} name="inviteeId" required disabled={pending}>
-                              {teammates.map((u) => (
-                                <option value={u.id} selected={pending && s.invite?.inviteeId === u.id}>{u.name}</option>
-                              ))}
-                            </select>
-                            <button class="btn btn--primary btn--block" style="margin-top:16px" disabled={pending}>
-                              Send invitation
-                            </button>
-                            {pending && <p class="caption">An invitation for this segment is pending, so it can't be sent again yet.</p>}
-                          </form>
+                        {isOrganizer && pending ? (
+                          <p class="caption" style="margin-top:0">
+                            Invitation pending for {s.invite?.inviteeName} ({s.invite?.inviteeNumber}), so it can't be sent
+                            again yet.
+                          </p>
+                        ) : isOrganizer ? (
+                          <>
+                            <form method="get" action={back} class="lookup">
+                              <input type="hidden" name="for" value={s.id} />
+                              <label for={`lookup-${s.id}`}>Teammate's student number</label>
+                              <div class="lookup__row">
+                                <input
+                                  id={`lookup-${s.id}`}
+                                  name="lookup"
+                                  value={lookupFor === s.id ? lookupText : ""}
+                                  placeholder="u1234567"
+                                  autocomplete="off"
+                                  spellcheck="false"
+                                  required
+                                  aria-invalid={lookupFor === s.id && lookupMessage ? "true" : undefined}
+                                  aria-describedby={`lookup-help-${s.id}`}
+                                />
+                                <button class="btn">Search</button>
+                              </div>
+                              <p class="utility" id={`lookup-help-${s.id}`} style="margin:6px 0 0">
+                                {lookupFor === s.id && lookupMessage ? (
+                                  <span class="short" role="alert">{lookupMessage}</span>
+                                ) : (
+                                  "Enter the student number, for example u9900102."
+                                )}
+                              </p>
+                            </form>
+                            {lookupFor === s.id && lookupResult && !lookupMessage && (
+                              <>
+                                <div class="found" role="status">
+                                  <span class="found__label">Student found</span>
+                                  <strong>{lookupResult.name}</strong>
+                                  <span>{lookupResult.studentNumber}</span>
+                                </div>
+                                <form id={`invite-${s.id}`} method="post" action={`/api/plans/${view.plan.id}/invite`} data-once>
+                                  <input type="hidden" name="segmentId" value={s.id} />
+                                  <input type="hidden" name="studentNumber" value={lookupResult.studentNumber ?? ""} />
+                                  <input type="hidden" name="back" value={`${back}?for=${s.id}&lookup=${lookupText}`} />
+                                  <noscript>
+                                    <label class="check">
+                                      <input type="checkbox" name="confirmed" value="yes" required />
+                                      <span>I have checked the name and student number.</span>
+                                    </label>
+                                  </noscript>
+                                  <button class="btn btn--primary btn--block" data-confirm-dialog={`invite-dlg-${s.id}`}>
+                                    Send invitation
+                                  </button>
+                                </form>
+                                <dialog id={`invite-dlg-${s.id}`} class="confirm-dialog" aria-labelledby={`invite-dlg-title-${s.id}`}>
+                                  <h2 id={`invite-dlg-title-${s.id}`}>Send this invitation?</h2>
+                                  <p>Check that this is the right teammate before sending.</p>
+                                  <dl class="confirm-dialog__details">
+                                    <dt>Name</dt>
+                                    <dd>{lookupResult.name}</dd>
+                                    <dt>Student number</dt>
+                                    <dd>{lookupResult.studentNumber}</dd>
+                                    <dt>Segment</dt>
+                                    <dd>{fmtDate(view.plan.date)} · {fmtRange(s.start, s.end)} · {s.room.name}</dd>
+                                  </dl>
+                                  <p class="utility">They have 30 minutes to accept. An invitation does not hold the room.</p>
+                                  <div class="confirm-dialog__actions">
+                                    <button type="button" class="btn" data-close>Go back</button>
+                                    <button type="submit" form={`invite-${s.id}`} name="confirmed" value="yes" class="btn btn--primary">
+                                      Confirm and send
+                                    </button>
+                                  </div>
+                                </dialog>
+                              </>
+                            )}
+                          </>
                         ) : (
                           <p class="utility">Only {view.organizer.name} can send invitations for this plan.</p>
                         )}
@@ -289,7 +387,9 @@ const inviteState = (s: NonNullable<typeof view>["segments"][number]) => {
                           {state.text}
                           {state.extra && <span style="font-weight:600"> · {state.extra}</span>}
                         </div>
-                        <div class="invite-card__line">Invited: {s.invite!.inviteeName}</div>
+                        <div class="invite-card__line">
+                          Invited: {s.invite!.inviteeName} ({s.invite!.inviteeNumber})
+                        </div>
                         <div class="invite-card__line">{fmtRange(s.start, s.end)} · {s.room.name}</div>
                         {s.invite!.inviteeId === me.id && s.invite!.status === "pending" && !s.invite!.expired && (
                           <a href={`/invitations/${s.invite!.id}`}>Answer this invitation</a>
@@ -310,7 +410,17 @@ const inviteState = (s: NonNullable<typeof view>["segments"][number]) => {
 
             <section class="side-block" aria-labelledby="next-heading">
               <h3 id="next-heading">Next step</h3>
-              {view.plan.status === "confirmed" ? (
+              {view.plan.status === "cancelled" ? (
+                <>
+                  <p class="flash flash--error" role="status" style="margin:0">
+                    <strong>This plan was cancelled.</strong> Its rooms are free again.
+                  </p>
+                  <p class="caption">
+                    <a href={`/search?date=${view.plan.date}&from=${fmtTime(view.plan.reqStartMin)}&until=${fmtTime(view.plan.reqEndMin)}&people=${view.plan.people}`}>Search again</a>{" "}
+                    to make a new plan.
+                  </p>
+                </>
+              ) : view.plan.status === "confirmed" ? (
                 <>
                   <p class="flash flash--notice" role="status" style="margin:0">
                     <strong>Plan confirmed in this prototype.</strong>
@@ -318,6 +428,14 @@ const inviteState = (s: NonNullable<typeof view>["segments"][number]) => {
                   <p class="caption">
                     Reserved in this prototype's database only. Nothing was booked with ANU Library.
                   </p>
+                  {isOrganizer && (
+                    <button type="button" class="btn btn--block btn--danger" style="margin-top:16px" data-confirm-dialog="cancel-plan-dlg">
+                      Cancel booking
+                    </button>
+                  )}
+                  {!isOrganizer && cancellable.length > 0 && (
+                    <p class="caption">You can cancel your own segment from the booking list.</p>
+                  )}
                 </>
               ) : (
                 <>
@@ -361,6 +479,59 @@ const inviteState = (s: NonNullable<typeof view>["segments"][number]) => {
             </section>
           </div>
         </aside>
+        {cancellable.map((s) => (
+          <>
+            <form id={`cancel-${s.id}`} method="post" action={`/api/plans/${view.plan.id}/cancel`} hidden data-once>
+              <input type="hidden" name="scope" value="segment" />
+              <input type="hidden" name="segmentId" value={s.id} />
+              <input type="hidden" name="back" value={back} />
+            </form>
+            <dialog id={`cancel-dlg-${s.id}`} class="confirm-dialog" aria-labelledby={`cancel-dlg-title-${s.id}`}>
+              <h2 id={`cancel-dlg-title-${s.id}`}>Cancel this booking?</h2>
+              <dl class="confirm-dialog__details">
+                <dt>Room</dt>
+                <dd>{s.room.name} · {s.room.libraryName}</dd>
+                <dt>Time</dt>
+                <dd>{fmtDate(view.plan.date)} · {fmtRange(s.start, s.end)}</dd>
+                <dt>Booking owner</dt>
+                <dd>{s.ownerName}</dd>
+              </dl>
+              <p class="utility">The room becomes free for others and the owner's daily allowance is returned. This can't be undone.</p>
+              <div class="confirm-dialog__actions">
+                <button type="button" class="btn" data-close>Keep booking</button>
+                <button type="submit" form={`cancel-${s.id}`} name="confirmed" value="yes" class="btn btn--danger">
+                  Yes, cancel it
+                </button>
+              </div>
+            </dialog>
+          </>
+        ))}
+        {isOrganizer && view.plan.status === "confirmed" && (
+          <>
+            <form id="cancel-plan" method="post" action={`/api/plans/${view.plan.id}/cancel`} hidden data-once>
+              <input type="hidden" name="scope" value="plan" />
+              <input type="hidden" name="back" value={back} />
+            </form>
+            <dialog id="cancel-plan-dlg" class="confirm-dialog" aria-labelledby="cancel-plan-dlg-title">
+              <h2 id="cancel-plan-dlg-title">Cancel the whole plan?</h2>
+              <p>These prototype reservations will be cancelled:</p>
+              <ul>
+                {cancellable.map((s) => (
+                  <li>
+                    {fmtRange(s.start, s.end)} · {s.room.name} · {s.ownerName}
+                  </li>
+                ))}
+              </ul>
+              <p class="utility">Every room becomes free for others. This can't be undone.</p>
+              <div class="confirm-dialog__actions">
+                <button type="button" class="btn" data-close>Keep bookings</button>
+                <button type="submit" form="cancel-plan" name="confirmed" value="yes" class="btn btn--danger">
+                  Yes, cancel all
+                </button>
+              </div>
+            </dialog>
+          </>
+        )}
       </div>
     )
   }

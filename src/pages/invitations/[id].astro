@@ -59,7 +59,9 @@ const overLimit = view ? view.inviteeDayMinutes + duration > DAILY_LIMIT_MIN : f
         )}
         <dl class="details">
           <dt>Invited by</dt>
-          <dd>{view.inviter.name}</dd>
+          <dd>{view.inviter.name} ({view.inviter.studentNumber})</dd>
+          <dt>Invited student</dt>
+          <dd>{view.invitee.name} ({view.invitee.studentNumber})</dd>
           <dt>Room</dt>
           <dd>{view.room.name}</dd>
           <dt>Library</dt>

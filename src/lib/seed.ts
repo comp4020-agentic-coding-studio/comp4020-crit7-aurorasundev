@@ -15,9 +15,14 @@ import { addDays, DEMO_WINDOW_DAYS, sydneyToday } from "./time";
 // Fictional prototype data only: people, rooms and availability are made up
 // and are not ANU Library inventory.
 
+// Student numbers are fictional and use a u99… range so they don't read as
+// real ANU uIDs.
 export const USERS = [
-  { id: "student-a", name: "Jordan Lee", sort: 1 },
-  { id: "student-b", name: "Alex Chen", sort: 2 },
+  { id: "student-a", name: "Jordan Lee", studentNumber: "u9900101", sort: 1 },
+  { id: "student-b", name: "Alex Chen", studentNumber: "u9900102", sort: 2 },
+  { id: "student-c", name: "Priya Nair", studentNumber: "u9900103", sort: 3 },
+  { id: "student-d", name: "Tom Walker", studentNumber: "u9900104", sort: 4 },
+  { id: "student-e", name: "Sofia Rossi", studentNumber: "u9900105", sort: 5 },
 ];
 
 const LIBRARIES = [
@@ -155,7 +160,15 @@ function setMeta(key: string, value: string) {
 }
 
 function seedStatic() {
-  db.insert(demoUsers).values(USERS).onConflictDoNothing().run();
+  for (const user of USERS) {
+    db.insert(demoUsers)
+      .values(user)
+      .onConflictDoUpdate({
+        target: demoUsers.id,
+        set: { name: user.name, studentNumber: user.studentNumber, sort: user.sort },
+      })
+      .run();
+  }
   db.insert(libraries).values(LIBRARIES).onConflictDoNothing().run();
   db.insert(rooms).values(ROOMS).onConflictDoNothing().run();
 }

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { db } from "./db";
 import { bus } from "./events";
 import { coverage, isExpired, isFree, overlaps, splitForOwner } from "./planner";
@@ -9,6 +9,7 @@ import {
   currentPlan,
   getPlan,
   getUser,
+  getUserByStudentNumber,
   latestInvites,
   roomsById,
 } from "./repo";
@@ -40,7 +41,7 @@ function ownPlan(userId: string, planId: string): Plan {
   const plan = getPlan(planId);
   if (!plan) fail("That plan no longer exists.");
   if (plan.organizerId !== userId) fail("Only the plan's organiser can change it.");
-  if (plan.status === "confirmed") fail("This plan is already confirmed and can't be edited.");
+  if (plan.status !== "draft") fail(`This plan is already ${plan.status} and can't be edited.`);
   return plan;
 }
 
@@ -204,12 +205,17 @@ export function takeSegment(userId: string, segmentId: string): Plan {
   return plan;
 }
 
-export function invite(userId: string, segmentId: string, inviteeId: string) {
+// Teammates are found by student number, and the organiser must confirm the
+// name and number shown before the invitation is created.
+export function invite(userId: string, segmentId: string, studentNumber: string, confirmed: boolean) {
   const seg = db.select().from(planSegments).where(eq(planSegments.id, segmentId)).get();
   if (!seg) fail("That segment has been removed.");
   const plan = ownPlan(userId, seg.planId);
-  if (inviteeId === userId) fail("Invite a teammate other than yourself.");
-  if (!getUser(inviteeId)) fail("Choose a demo teammate.");
+  const invitee = getUserByStudentNumber(studentNumber);
+  if (!invitee) fail(`No student with number ${studentNumber.trim() || "(blank)"} was found in this prototype.`);
+  const inviteeId = invitee.id;
+  if (inviteeId === userId) fail("That's your own student number. Invite a teammate instead.");
+  if (!confirmed) fail(`Confirm that ${invitee.name} (${invitee.studentNumber}) is the right teammate before sending.`);
   if (seg.ownerId) fail("This segment already has an owner.");
   const inv = latestInvites([seg.id]).get(seg.id);
   if (inv?.status === "pending" && !isExpired(inv.createdAtMs, Date.now())) {
@@ -228,7 +234,7 @@ export function invite(userId: string, segmentId: string, inviteeId: string) {
     .returning()
     .get();
   notify([userId, inviteeId], plan.id);
-  return created;
+  return { ...created, inviteeName: invitee.name, studentNumber: invitee.studentNumber };
 }
 
 export function respond(userId: string, invitationId: string, accept: boolean) {
@@ -240,7 +246,7 @@ export function respond(userId: string, invitationId: string, accept: boolean) {
   const plan = getPlan(inv.planId);
   const seg = db.select().from(planSegments).where(eq(planSegments.id, inv.segmentId)).get();
   if (!plan || !seg) fail("The plan for this invitation has changed.");
-  if (plan.status === "confirmed") fail("This plan has already been confirmed.");
+  if (plan.status !== "draft") fail(`This plan has already been ${plan.status}.`);
   if (seg.ownerId) fail("Someone already took responsibility for this segment.");
 
   if (accept) {
@@ -286,12 +292,13 @@ export function confirmPlan(userId: string, planId: string, acceptShort: boolean
   if (!plan) fail("That plan no longer exists.");
   if (plan.organizerId !== userId) fail("Only the plan's organiser can confirm it.");
   if (plan.status === "confirmed") return { alreadyConfirmed: true };
+  if (plan.status === "cancelled") fail("This plan was cancelled. Start a new search to book again.");
 
   try {
     db.transaction(
       (tx) => {
         const fresh = tx.select().from(plans).where(eq(plans.id, planId)).get();
-        if (fresh?.status === "confirmed") return;
+        if (fresh?.status !== "draft") return;
         const segs = tx.select().from(planSegments).where(eq(planSegments.planId, planId)).all();
         if (!segs.length) fail("Add at least one room segment before confirming.");
         if (!inDemoWindow(plan.date) || plan.date < sydneyToday()) {
@@ -364,4 +371,56 @@ export function confirmPlan(userId: string, planId: string, acceptShort: boolean
   const owners = segmentsOf(plan.id).flatMap((s) => (s.ownerId ? [s.ownerId] : []));
   notify([userId, ...owners], plan.id);
   return { alreadyConfirmed: false };
+}
+
+// Cancelling deletes the prototype reservation rows, which frees the room and
+// the owner's daily allowance; the segment stays on the plan, marked
+// cancelled. A booking owner may cancel their own segment; the organiser may
+// cancel any segment or the whole plan.
+export function cancelSegment(userId: string, segmentId: string) {
+  const seg = db.select().from(planSegments).where(eq(planSegments.id, segmentId)).get();
+  if (!seg) fail("That segment no longer exists.");
+  const plan = getPlan(seg.planId);
+  if (!plan) fail("That plan no longer exists.");
+  if (plan.status !== "confirmed") fail("Only confirmed bookings can be cancelled.");
+  if (seg.cancelledAt) fail("That booking was already cancelled.");
+  if (userId !== seg.ownerId && userId !== plan.organizerId) {
+    fail("Only the segment's booking owner or the plan's organiser can cancel it.");
+  }
+  db.transaction((tx) => {
+    tx.delete(bookings)
+      .where(
+        and(
+          eq(bookings.planId, plan.id),
+          eq(bookings.roomId, seg.roomId),
+          eq(bookings.startMin, seg.startMin),
+          eq(bookings.endMin, seg.endMin),
+        ),
+      )
+      .run();
+    tx.update(planSegments).set({ cancelledAt: new Date().toISOString() }).where(eq(planSegments.id, seg.id)).run();
+    const remaining = tx
+      .select()
+      .from(planSegments)
+      .where(eq(planSegments.planId, plan.id))
+      .all()
+      .filter((s) => !s.cancelledAt);
+    if (!remaining.length) tx.update(plans).set({ status: "cancelled" }).where(eq(plans.id, plan.id)).run();
+  });
+  notify([userId, plan.organizerId, ...(seg.ownerId ? [seg.ownerId] : [])], plan.id);
+}
+
+export function cancelPlan(userId: string, planId: string) {
+  const plan = getPlan(planId);
+  if (!plan) fail("That plan no longer exists.");
+  if (plan.organizerId !== userId) fail("Only the plan's organiser can cancel the whole plan.");
+  if (plan.status !== "confirmed") fail("Only a confirmed plan can be cancelled.");
+  const now = new Date().toISOString();
+  const owners = segmentsOf(plan.id).flatMap((s) => (s.ownerId ? [s.ownerId] : []));
+  db.transaction((tx) => {
+    tx.delete(bookings).where(eq(bookings.planId, plan.id)).run();
+    tx.update(planSegments).set({ cancelledAt: now }).where(and(eq(planSegments.planId, plan.id), isNull(planSegments.cancelledAt))).run();
+    tx.update(plans).set({ status: "cancelled" }).where(eq(plans.id, plan.id)).run();
+  });
+  notify([userId, ...owners], plan.id);
 }
