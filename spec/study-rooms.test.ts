@@ -404,6 +404,32 @@ describe("cancelling confirmed bookings", () => {
   });
 });
 
+describe("switching demo student", () => {
+  it("lands on the library bookings home page as the new student", async () => {
+    const res = await fetch(new URL("/api/identity", baseUrl), {
+      method: "POST",
+      redirect: "manual",
+      headers: { cookie: `demo_user=${A}`, origin: baseUrl, "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ user: B, back: "/my-plans" }),
+    });
+    expect(res.status).toBe(303);
+    const location = new URL(res.headers.get("location") ?? "", baseUrl);
+    expect(location.pathname).toBe("/");
+    expect(location.searchParams.get("notice")).toBe("Signed in as Alex Chen (u9900102).");
+    expect(res.headers.get("set-cookie")).toContain("demo_user=student-b");
+    const home = await get(`${location.pathname}${location.search}`, B);
+    expect(home.doc.querySelector(".lib-crumbs__who")?.textContent).toContain("Alex Chen");
+    expect(home.doc.querySelector(".flash--notice")?.textContent).toContain("Signed in as Alex Chen");
+  });
+
+  it("continues to the invitation when switching from it", async () => {
+    const { invitationId } = await teamPlanWithInvite();
+    const back = `/invitations/${invitationId}`;
+    const switched = await post("/api/identity", { user: B, back, continue: "yes" });
+    expect(new URL(switched.location, baseUrl).pathname).toBe(back);
+  });
+});
+
 describe("navigation", () => {
   it("planner nav searches rooms and a home icon returns to library bookings", async () => {
     const page = await get("/my-plans");

@@ -11,7 +11,6 @@ interface Props {
 const { title, active, pageClass = "" } = Astro.props;
 const user = Astro.locals.user;
 const users = listUsers();
-const back = `${Astro.url.pathname}${Astro.url.search}`;
 const cleanUrl = new URL(Astro.url);
 cleanUrl.searchParams.delete("error");
 cleanUrl.searchParams.delete("notice");
@@ -59,13 +58,12 @@ const links = [
             <span class="chevron" aria-hidden="true"></span>
           </summary>
           <div class="identity__panel">
-            <p class="utility">Switch demo identity to see both sides of an invitation. These are fictional test users.</p>
+            <p class="utility">Switch demo student (like signing in as someone else); you return to the library bookings home page. These are fictional test users.</p>
             <div class="stack-sm">
               {
                 users.map((u) => (
                   <form method="post" action="/api/identity">
                     <input type="hidden" name="user" value={u.id} />
-                    <input type="hidden" name="back" value={back} />
                     <button class="btn btn--small identity__user" aria-pressed={u.id === user.id ? "true" : "false"}>
                       {u.name} <span class="identity__who">{u.studentNumber}</span>
                     </button>
@@ -104,7 +102,6 @@ const links = [
                   .map((u) => (
                     <form method="post" action="/api/identity">
                       <input type="hidden" name="user" value={u.id} />
-                      <input type="hidden" name="back" value={back} />
                       <button class="btn btn--small btn--block">Switch to {u.name} ({u.studentNumber})</button>
                     </form>
                   ))

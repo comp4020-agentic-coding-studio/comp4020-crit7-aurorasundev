@@ -52,6 +52,7 @@ const overLimit = view ? view.inviteeDayMinutes + duration > DAILY_LIMIT_MIN : f
               <form method="post" action="/api/identity" style="margin-top:8px">
                 <input type="hidden" name="user" value={view.invitee.id} />
                 <input type="hidden" name="back" value={back} />
+                <input type="hidden" name="continue" value="yes" />
                 <button class="btn btn--small">Switch to {view.invitee.name}</button>
               </form>
             </div>

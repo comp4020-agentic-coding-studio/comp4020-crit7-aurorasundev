@@ -2467,3 +2467,16 @@ input[type="checkbox"] {
   background: var(--mark);
   margin: 0 8px;
 }
+
+.lib-crumbs .lib-wrap {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.lib-crumbs__who {
+  color: var(--ink-2);
+  padding: 6px 0;
+}
