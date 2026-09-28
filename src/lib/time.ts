@@ -64,14 +64,11 @@ export function fmtDuration(min: number): string {
   return parts.join(" ");
 }
 
+const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
 export function fmtDate(date: string, withYear = false): string {
-  return new Intl.DateTimeFormat("en-AU", {
-    weekday: "short",
-    day: "numeric",
-    month: "short",
-    ...(withYear ? { year: "numeric" } : {}),
-    timeZone: "UTC",
-  })
-    .format(new Date(`${date}T00:00:00Z`))
-    .replace(/,/g, "");
+  const d = new Date(`${date}T00:00:00Z`);
+  const text = `${WEEKDAYS[d.getUTCDay()]} ${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]}`;
+  return withYear ? `${text} ${d.getUTCFullYear()}` : text;
 }

@@ -372,17 +372,11 @@ select {
 
 select {
   appearance: none;
-  background-image:
-    linear-gradient(45deg, transparent 50%, var(--ink-2) 50%),
-    linear-gradient(135deg, var(--ink-2) 50%, transparent 50%);
-  background-position:
-    calc(100% - 22px) 50%,
-    calc(100% - 16px) 50%;
-  background-size:
-    6px 6px,
-    6px 6px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='9' viewBox='0 0 14 9'%3E%3Cpath d='M1 1.5l6 6 6-6' fill='none' stroke='%2344526b' stroke-width='1.8'/%3E%3C/svg%3E");
+  background-position: calc(100% - 14px) 50%;
+  background-size: 13px 8px;
   background-repeat: no-repeat;
-  padding-right: 40px;
+  padding-right: 38px;
 }
 
 input:hover,
@@ -1193,7 +1187,7 @@ input[type="checkbox"] {
 }
 
 .summary > div {
-  padding: 4px 24px;
+  padding: 4px 22px;
 }
 
 .summary > div + div {
@@ -1202,7 +1196,7 @@ input[type="checkbox"] {
 
 .summary strong {
   display: block;
-  font-size: 23px;
+  font-size: 22px;
   font-weight: 700;
   line-height: 1.2;
 }
@@ -1600,7 +1594,7 @@ input[type="checkbox"] {
 
 @media (max-width: 760px) {
   h1 {
-    font-size: 27px;
+    font-size: 25px;
   }
 
   .invite-form--pending {
@@ -1723,11 +1717,14 @@ input[type="checkbox"] {
   select {
     font-size: 17px;
     min-height: 48px;
+    padding-left: 12px;
+    padding-right: 30px;
+    background-position: calc(100% - 10px) 50%;
   }
 
   .search-form {
-    grid-template-columns: 1.2fr 1fr 1fr;
-    gap: 16px 14px;
+    grid-template-columns: 1.25fr 1fr 1fr;
+    gap: 16px 12px;
     margin: 18px 0 0;
   }
 

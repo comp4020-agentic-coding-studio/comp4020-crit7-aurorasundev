@@ -200,7 +200,7 @@ const inviteState = (s: NonNullable<typeof view>["segments"][number]) => {
                       <td>{ownerLabel(s)}</td>
                       {isOrganizer && view.plan.status !== "confirmed" && (
                         <td style="text-align:right">
-                          {!s.ownerId && (
+                          {!s.ownerId && s.status !== "Pending approval" && (
                             <form method="post" action="/api/plans/segments" class="inline-form">
                               <input type="hidden" name="intent" value="take" />
                               <input type="hidden" name="segmentId" value={s.id} />
