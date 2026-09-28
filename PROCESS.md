@@ -41,6 +41,12 @@ realistic invitation flow and cancellation
 
 > 在invite a teammate这个功能中，实现得更现实一些，先输入队友学号进行搜索
 
+I also had the searched period's start and end marked in red on the grid
+([`c2244f2`](https://github.com/comp4020-agentic-coding-studio/comp4020-crit7-aurorasundev/commit/c2244f2)).
+And because switching student had left you on the same page, I made it land
+on the home page like a real sign-in
+([`8c0a165`](https://github.com/comp4020-agentic-coding-studio/comp4020-crit7-aurorasundev/commit/8c0a165)).
+
 I knew it was right because `pnpm check` stayed green at every commit. After
 each deploy I reran the CI's live checks and clicked the core flow in a real
 browser.
