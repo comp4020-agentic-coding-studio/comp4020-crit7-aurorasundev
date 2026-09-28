@@ -36,7 +36,7 @@ const links = [
     <a class="skip" href="#main">Skip to content</a>
     <header class="site-header">
       <div class="site-header__inner">
-        <a class="brand" href="/">Study Room Planner</a>
+        <a class="brand" href="/search">Study Room Planner</a>
         <nav class="main-nav" aria-label="Main">
           {
             links.map((link) => (
@@ -68,7 +68,7 @@ const links = [
             </div>
             <hr class="menu-rule" />
             <form method="post" action="/api/demo/reset">
-              <input type="hidden" name="back" value="/" />
+              <input type="hidden" name="back" value="/search" />
               <button class="btn btn--small btn--block">Reset demo data</button>
             </form>
           </div>
@@ -102,7 +102,7 @@ const links = [
                   ))
               }
               <form method="post" action="/api/demo/reset">
-                <input type="hidden" name="back" value="/" />
+                <input type="hidden" name="back" value="/search" />
                 <button class="btn btn--small btn--block">Reset demo data</button>
               </form>
             </div>
@@ -130,7 +130,7 @@ const links = [
     <footer class="site-footer">
       <div class="site-footer__inner">
         <span>Prototype bookings only — not real ANU Library reservations</span>
-        <span>Study Room Planner · An independent course prototype · <a href="/readme/">About</a></span>
+        <span><a href="/">Library bookings home</a> · Study Room Planner · An independent course prototype · <a href="/readme/">About</a></span>
       </div>
     </footer>
     <div class="live-banner" role="status" aria-live="polite" hidden>

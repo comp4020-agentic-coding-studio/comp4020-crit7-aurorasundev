@@ -1,0 +1,56 @@
+---
+import "../styles.css";
+
+interface Props {
+  title: string;
+}
+
+const { title } = Astro.props;
+---
+
+<!doctype html>
+<html lang="en-AU">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="A course-prototype mock-up of the ANU Library Bookings page, showing where a Study Room Planner could fit. Not an ANU Library service."
+    />
+    <title>{title}</title>
+  </head>
+  <body class="lib">
+    <a class="skip" href="#main">Skip to main content</a>
+    <header>
+      <div class="lib-strip" role="note">
+        <div class="lib-wrap">
+          <strong>Course prototype.</strong> A mock-up of the ANU Library Bookings page for COMP4020, not an ANU service.
+          Real bookings: <a href="https://anu.libcal.com/" rel="noopener">anu.libcal.com</a>
+        </div>
+      </div>
+      <div class="lib-banner">
+        <div class="lib-wrap">
+          <a class="lib-banner__title" href="/">Library Bookings</a>
+          <span class="lib-banner__tag">Mock-up</span>
+        </div>
+      </div>
+    </header>
+    <nav class="lib-crumbs" aria-label="Breadcrumb">
+      <div class="lib-wrap">
+        <ol>
+          <li><span>Library</span></li>
+          <li><a href="/" aria-current="page">Bookings</a></li>
+        </ol>
+      </div>
+    </nav>
+    <main id="main" class="lib-wrap lib-main">
+      <slot />
+    </main>
+    <footer class="lib-footer">
+      <div class="lib-wrap">
+        <span>Mock-up for an independent COMP4020 course prototype. Not affiliated with or endorsed by ANU Library.</span>
+        <span><a href="/readme/">About this prototype</a></span>
+      </div>
+    </footer>
+  </body>
+</html>

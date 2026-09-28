@@ -18,6 +18,11 @@
 - The collaboration feature (teammates owning consecutive segments) is a
   *proposed* improvement, not an existing ANU permission.
 - No real student data, no emails, no SSO, no LibCal integration.
+- `/` is a labelled mock-up of the ANU Library Bookings page
+  (anu.libcal.com) showing where the planner would fit. It may mirror that
+  page's structure and published guidance, but never ANU logos, banner
+  images or a login, and it always says it is a course prototype and links
+  the real site. The planner itself lives at `/search`.
 
 ## Rules the server must enforce (not just the UI)
 - 120 minutes per owner per Australia/Sydney calendar day (confirmed + the

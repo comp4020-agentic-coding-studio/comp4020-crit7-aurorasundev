@@ -19,10 +19,11 @@ const html = (await readme.compiledContent()).replace(/(src|href)="public\//g, '
     <title>{title}</title>
   </head>
   <body>
-    <nav aria-label="site">
-      <a href="/">Guestbook</a>
+    <nav aria-label="site" class="readme-nav">
+      <a href="/">Library bookings</a>
+      <a href="/search">Study Room Planner</a>
       <a href="/readme/">About</a>
     </nav>
-    <main set:html={html} />
+    <main class="readme" set:html={html} />
   </body>
 </html>

@@ -12,7 +12,13 @@ reserves a real ANU Library room.
 
 ## Try it
 
-1. **Cross-room comparison.** On the search page choose *Try demo scenario →
+The home page (`/`) is a labelled mock-up of today's ANU Library Bookings
+page with the planner added as a proposed improvement: the **Open Study Room
+Planner** card, the *Find a room in every library* search box, and the four
+**Book in … Library** buttons, which now open the unified planner filtered
+to that library. The planner itself is at `/search`.
+
+1. **Cross-room comparison.** On the planner page choose *Try demo scenario →
    Cross-room comparison*. Four people want 13:00–15:00; no room is free for
    the whole period, so the best suggestion is Chifley 2.3 then Chifley 2.5.
    The plan shows the 5-minute room change and says it is **5 minutes

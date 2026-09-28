@@ -81,7 +81,7 @@ const inviteState = (s: NonNullable<typeof view>["segments"][number]) => {
       <div class="main-col" style="padding:36px 0 48px">
         <h1>Plan not found</h1>
         <p class="lede">This plan doesn't exist, or the demo data was reset.</p>
-        <p><a href="/">Search rooms</a> · <a href="/my-plans">My plans</a></p>
+        <p><a href="/search">Search rooms</a> · <a href="/my-plans">My plans</a></p>
       </div>
     ) : (
       <div class="with-rail" style="--rail:420px">
@@ -225,7 +225,7 @@ const inviteState = (s: NonNullable<typeof view>["segments"][number]) => {
             </div>
             {isOrganizer && view.plan.status !== "confirmed" && (
               <p class="utility" style="margin-top:12px">
-                Need a different room or time? <a href={`/?date=${view.plan.date}&from=${fmtTime(view.plan.reqStartMin)}&until=${fmtTime(view.plan.reqEndMin)}&people=${view.plan.people}`}>Search again</a>
+                Need a different room or time? <a href={`/search?date=${view.plan.date}&from=${fmtTime(view.plan.reqStartMin)}&until=${fmtTime(view.plan.reqEndMin)}&people=${view.plan.people}`}>Search again</a>
               </p>
             )}
           </section>
@@ -324,7 +324,7 @@ const inviteState = (s: NonNullable<typeof view>["segments"][number]) => {
                   {view.plan.lastError && (
                     <div class="flash flash--error" role="alert">
                       <strong>Confirmation failed:</strong> {view.plan.lastError} Your draft is unchanged.{" "}
-                      <a href={`/?date=${view.plan.date}&from=${fmtTime(view.plan.reqStartMin)}&until=${fmtTime(view.plan.reqEndMin)}&people=${view.plan.people}`}>Search again</a>
+                      <a href={`/search?date=${view.plan.date}&from=${fmtTime(view.plan.reqStartMin)}&until=${fmtTime(view.plan.reqEndMin)}&people=${view.plan.people}`}>Search again</a>
                     </div>
                   )}
                   {isOrganizer ? (

@@ -8,5 +8,5 @@ export const POST: APIRoute = (context) =>
   runAction(context, () => {
     resetDemoData();
     notify(listUsers().map((u) => u.id));
-    return { to: "/", notice: "Demo data reset. All prototype plans and invitations were cleared." };
+    return { to: "/search", notice: "Demo data reset. All prototype plans and invitations were cleared." };
   });

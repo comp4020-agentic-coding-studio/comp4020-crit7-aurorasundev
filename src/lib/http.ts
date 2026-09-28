@@ -6,7 +6,7 @@ export const IDENTITY_COOKIE = "demo_user";
 // Forms post here and are redirected (303) back to the page they came from,
 // so every action works without client-side JavaScript. Messages travel in
 // the query string and are rendered as escaped text.
-export function safeBack(value: FormDataEntryValue | null, fallback = "/"): string {
+export function safeBack(value: FormDataEntryValue | null, fallback = "/search"): string {
   const back = typeof value === "string" ? value : "";
   return back.startsWith("/") && !back.startsWith("//") ? back : fallback;
 }

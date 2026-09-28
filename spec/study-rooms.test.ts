@@ -42,7 +42,7 @@ function db() {
 }
 
 async function scenarioDates() {
-  const page = await get("/");
+  const page = await get("/search");
   const hrefs = [...page.doc.querySelectorAll(".demo-links a")].map((a) => a.getAttribute("href") ?? "");
   const date = (href: string) => new URL(href, baseUrl).searchParams.get("date") ?? "";
   return { crossRoom: date(hrefs[0]), team: date(hrefs[1]), crossHref: hrefs[0], teamHref: hrefs[1] };
@@ -55,7 +55,7 @@ async function addOption(user: string, date: string, reqStart: number, reqEnd: n
 }
 
 async function currentPlanId(user: string): Promise<string> {
-  const page = await get("/", user);
+  const page = await get("/search", user);
   const href = page.doc.querySelector(".rail a.btn--primary")?.getAttribute("href") ?? "";
   expect(href).toMatch(/^\/plans\//);
   return href.split("/").pop() ?? "";
@@ -87,6 +87,33 @@ function planBookings(planId: string): number {
 beforeEach(async () => {
   const reset = await post("/api/demo/reset", { back: "/" });
   expect(reset.status).toBe(303);
+});
+
+describe("library bookings home (mock-up of anu.libcal.com)", () => {
+  it("mirrors the booking page and puts the planner where students will see it", async () => {
+    const page = await get("/");
+    expect(page.doc.querySelector("h1")?.textContent).toBe("Book a group study room");
+    const buttons = [...page.doc.querySelectorAll(".lib-grid a")].map((a) => [a.textContent?.trim(), a.getAttribute("href")]);
+    expect(buttons).toEqual([
+      ["Book in Chifley Library", "/search?library=chifley"],
+      ["Book in Hancock Library", "/search?library=hancock"],
+      ["Book in Menzies Library", "/search?library=menzies"],
+      ["Book in Law Library", "/search?library=law"],
+    ]);
+    const card = page.doc.querySelector(".planner-card");
+    expect(card?.querySelector('a[href="/search"]')?.textContent).toContain("Open Study Room Planner");
+    const firstLibrary = page.doc.querySelector(".lib-grid");
+    expect(card && firstLibrary && card.compareDocumentPosition(firstLibrary) & 4).toBeTruthy();
+    expect(page.html).toContain("Students can book a group study space for up to two hours a day.");
+  });
+
+  it("says it is a prototype, links the real site and offers no ANU login", async () => {
+    const page = await get("/");
+    expect(page.doc.querySelector(".lib-strip")?.textContent).toContain("not an ANU service");
+    expect(page.doc.querySelector('a[href="https://anu.libcal.com/"]')).toBeTruthy();
+    expect(page.doc.querySelector('input[type="password"]')).toBeNull();
+    expect(page.doc.querySelector("img")).toBeNull();
+  });
 });
 
 describe("search", () => {
@@ -126,7 +153,7 @@ describe("search", () => {
   });
 
   it("rejects dates outside the demo window", async () => {
-    const page = await get("/?date=2020-01-01&from=13:00&until=15:00&people=4");
+    const page = await get("/search?date=2020-01-01&from=13:00&until=15:00&people=4");
     expect(page.doc.querySelector("#date-error")?.textContent).toContain("Demo availability");
     expect(page.doc.querySelector(".grid")).toBeNull();
   });
