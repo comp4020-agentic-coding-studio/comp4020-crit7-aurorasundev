@@ -1,0 +1,102 @@
+---
+import Base from "../../layouts/Base.astro";
+import { invitationView } from "../../lib/repo";
+import { DAILY_LIMIT_MIN, fmtDate, fmtDuration, fmtRange, TIME_ZONE } from "../../lib/time";
+
+const view = invitationView(Astro.params.id ?? "");
+if (!view) Astro.response.status = 404;
+const me = Astro.locals.user;
+const back = Astro.url.pathname;
+const expiresAt = view
+  ? new Intl.DateTimeFormat("en-AU", { timeZone: TIME_ZONE, hour: "2-digit", minute: "2-digit", hour12: false }).format(
+      new Date(view.expiresAtMs),
+    )
+  : "";
+const isInvitee = view?.invitee.id === me.id;
+const duration = view ? view.segment.end - view.segment.start : 0;
+const open = view && view.invitation.status === "pending" && !view.expired && !view.superseded;
+const state = !view
+  ? ""
+  : view.superseded
+    ? "No longer needed: the plan changed or was confirmed."
+    : view.invitation.status === "accepted"
+      ? "Accepted. The room is reserved only when the organiser confirms the plan."
+      : view.invitation.status === "declined"
+        ? "Declined."
+        : view.expired
+          ? "Expired. The organiser can send a new invitation."
+          : `Pending · expires in ${view.minutesLeft} minutes (at ${expiresAt})`;
+const overLimit = view ? view.inviteeDayMinutes + duration > DAILY_LIMIT_MIN : false;
+---
+
+<Base title={view ? "Segment invitation" : "Invitation not found"} active="plans">
+  {
+    !view ? (
+      <>
+        <h1>Invitation not found</h1>
+        <p class="lede">This invitation doesn't exist, or the demo data was reset.</p>
+        <p><a href="/my-plans">My plans</a></p>
+      </>
+    ) : (
+      <div style="max-width:720px">
+        <h1>{view.inviter.name} invited you to take a segment</h1>
+        <p class="lede">
+          Accepting means you take responsibility for booking this segment under your own daily allowance. It does not reserve
+          the room yet.
+        </p>
+        {!isInvitee && (
+          <div class="info info--box" style="margin-top:16px">
+            <span class="info__icon" aria-hidden="true">i</span>
+            <div>
+              This invitation is for {view.invitee.name}. You are viewing as {me.name}.
+              <form method="post" action="/api/identity" style="margin-top:8px">
+                <input type="hidden" name="user" value={view.invitee.id} />
+                <input type="hidden" name="back" value={back} />
+                <button class="btn btn--small">Switch to {view.invitee.name}</button>
+              </form>
+            </div>
+          </div>
+        )}
+        <dl class="details">
+          <dt>Invited by</dt>
+          <dd>{view.inviter.name}</dd>
+          <dt>Room</dt>
+          <dd>{view.room.name}</dd>
+          <dt>Library</dt>
+          <dd>{view.room.libraryName}</dd>
+          <dt>Date</dt>
+          <dd>{fmtDate(view.plan.date, true)}</dd>
+          <dt>Start – end</dt>
+          <dd>{fmtRange(view.segment.start, view.segment.end)}</dd>
+          <dt>Duration</dt>
+          <dd>{fmtDuration(duration)}</dd>
+          <dt>Your total already assigned that day</dt>
+          <dd>
+            {fmtDuration(view.inviteeDayMinutes)} of {DAILY_LIMIT_MIN / 60} hours
+          </dd>
+          <dt>Status</dt>
+          <dd>{state}</dd>
+        </dl>
+        {open && overLimit && (
+          <p class="warn">Accepting would take {view.invitee.name} over the 2-hour daily limit, so it will be refused.</p>
+        )}
+        <form method="post" action={`/api/invitations/${view.invitation.id}/respond`} class="actions" data-once>
+          <input type="hidden" name="back" value={back} />
+          <button class="btn btn--primary" name="decision" value="accept" disabled={!open || !isInvitee}>
+            Accept segment
+          </button>
+          <button class="btn" name="decision" value="decline" disabled={!open || !isInvitee}>
+            Decline
+          </button>
+        </form>
+        <p class="info" style="margin-top:20px">
+          <span class="info__icon" aria-hidden="true">i</span>
+          <span>Each participant confirms their own segment. An invitation does not hold the room. Prototype bookings only.</span>
+        </p>
+        <p style="margin-top:20px">
+          <a href={`/plans/${view.plan.id}`}>View the whole plan</a>
+        </p>
+      </div>
+    )
+  }
+</Base>

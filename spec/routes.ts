@@ -1,3 +1,3 @@
-// The routes the invariants run against. When you add a page, add its route
-// here, or the invariants stop covering it.
-export const ROUTES = ["/", "/readme/"];
+// Static routes the invariants suite checks. Dynamic routes (/plans/[id],
+// /invitations/[id]) get the same checks in spec/study-rooms.test.ts.
+export const ROUTES = ["/", "/my-plans", "/readme/"];

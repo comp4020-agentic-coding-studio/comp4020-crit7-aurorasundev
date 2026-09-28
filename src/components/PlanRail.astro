@@ -1,0 +1,128 @@
+---
+import type { PlanView } from "../lib/repo";
+import { DAILY_LIMIT_MIN, fmtDate, fmtDuration, fmtRange } from "../lib/time";
+
+interface Props {
+  view?: PlanView;
+  back: string;
+  search: { date: string; reqStart: number; reqEnd: number; people: number };
+}
+
+const { view, back, search } = Astro.props;
+const me = Astro.locals.user.id;
+const segments = view?.segments ?? [];
+const cov = view?.coverage;
+const needTeammate = segments.filter((s) => !s.ownerId);
+const needMinutes = needTeammate.reduce((sum, s) => sum + (s.end - s.start), 0);
+const breakAfter = new Map(cov?.breaks.map((b) => [b.afterIndex, b]) ?? []);
+const breakMin = cov?.breaks.reduce((sum, b) => sum + b.minutes, 0) ?? 0;
+---
+
+<section aria-labelledby="plan-rail-heading">
+  <h2 id="plan-rail-heading">Your plan</h2>
+  {
+    view && segments.length > 0 && (
+      <p class="utility" style="margin:4px 0 0">
+        {fmtDate(view.plan.date)} · requested {fmtRange(view.plan.reqStartMin, view.plan.reqEndMin)}
+      </p>
+    )
+  }
+  {
+    segments.length === 0 ? (
+      <p class="lede" style="margin-top:16px">Choose a room and time to start your plan.</p>
+    ) : (
+      <ol class="plan-list">
+        {segments.map((s, i) => (
+          <>
+            <li class="plan-item">
+              <span class="num" aria-hidden="true">{i + 1}</span>
+              <div>
+                <div class="plan-item__time">{fmtRange(s.start, s.end)}</div>
+                <div class="plan-item__room">{s.room.name}</div>
+                <div class="plan-item__meta">
+                  {s.room.libraryName} · {view!.plan.people} {view!.plan.people === 1 ? "person" : "people"}
+                </div>
+                <div class="plan-item__owner">
+                  Booking owner: {s.ownerId === me ? "You" : (s.ownerName ?? "needs a teammate")}
+                </div>
+                <form method="post" action="/api/plans/segments" class="inline-form">
+                  <input type="hidden" name="intent" value="remove" />
+                  <input type="hidden" name="segmentId" value={s.id} />
+                  <input type="hidden" name="back" value={back} />
+                  <button class="btn btn--link">
+                    Remove from plan<span class="sr-only">: {s.room.name} {fmtRange(s.start, s.end)}</span>
+                  </button>
+                </form>
+              </div>
+              <span class="plan-item__dur">{fmtDuration(s.end - s.start)}</span>
+            </li>
+            {breakAfter.get(i) && (
+              <li class="plan-break">
+                {breakAfter.get(i)!.minutes}-minute room change
+                {breakAfter.get(i)!.crossLibrary ? " between libraries" : ""} · not discussion time
+              </li>
+            )}
+          </>
+        ))}
+      </ol>
+    )
+  }
+  {
+    view && cov && segments.length > 0 && (
+      <>
+        <dl class="totals">
+          <dt class="totals__main">Total coverage</dt>
+          <dd class="totals__main">{fmtDuration(cov.bookedMin)}</dd>
+          {breakMin > 0 && (
+            <>
+              <dt>Room-change time</dt>
+              <dd>−{fmtDuration(breakMin)}</dd>
+            </>
+          )}
+          <dt>Usable discussion time</dt>
+          <dd>{fmtDuration(cov.usableMin)}</dd>
+          {cov.shortfallMin > 0 && (
+            <>
+              <dt>Requested</dt>
+              <dd>{fmtDuration(cov.requestedMin)}</dd>
+            </>
+          )}
+        </dl>
+        {cov.shortfallMin > 0 && (
+          <p class="warn" style="margin:0 0 16px">
+            <span class="short">{fmtDuration(cov.shortfallMin)} short</span> — not a full match. Extend the time
+            window or choose another plan.
+          </p>
+        )}
+        {needTeammate.length > 0 && (
+          <p class="warn" style="margin:0 0 16px">
+            {fmtDuration(needMinutes)} is over your {DAILY_LIMIT_MIN / 60}-hour daily limit and needs a teammate's
+            approval.
+          </p>
+        )}
+        <a class="btn btn--primary btn--block" href={`/plans/${view.plan.id}`}>Review plan</a>
+      </>
+    )
+  }
+  {
+    !segments.length && (
+      <button class="btn btn--primary btn--block" disabled style="margin-top:20px">
+        Review plan
+      </button>
+    )
+  }
+  <p class="rail-note">Prototype bookings only.</p>
+  {
+    view && segments.length > 0 && (
+      <form method="post" action="/api/plans/segments" style="margin-top:8px">
+        <input type="hidden" name="intent" value="new" />
+        <input type="hidden" name="date" value={search.date} />
+        <input type="hidden" name="reqStart" value={search.reqStart} />
+        <input type="hidden" name="reqEnd" value={search.reqEnd} />
+        <input type="hidden" name="people" value={search.people} />
+        <input type="hidden" name="back" value={back} />
+        <button class="btn btn--link">Start a new plan</button>
+      </form>
+    )
+  }
+</section>

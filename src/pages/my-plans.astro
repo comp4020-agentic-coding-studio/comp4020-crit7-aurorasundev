@@ -1,0 +1,98 @@
+---
+import Base from "../layouts/Base.astro";
+import { invitationsFor, plansFor } from "../lib/repo";
+import { fmtDate, fmtDuration, fmtRange } from "../lib/time";
+
+const me = Astro.locals.user;
+const plans = plansFor(me.id);
+const invitations = invitationsFor(me.id);
+const statusClass = {
+  Draft: "draft",
+  "Pending approval": "pending",
+  "Ready to confirm": "ready",
+  Confirmed: "confirmed",
+  Failed: "failed",
+} as const;
+const inviteLabel = (i: (typeof invitations)[number]) =>
+  i.superseded
+    ? { cls: "needs", text: "No longer needed" }
+    : i.invitation.status === "accepted"
+      ? { cls: "approved", text: "Accepted" }
+      : i.invitation.status === "declined"
+        ? { cls: "declined", text: "Declined" }
+        : i.expired
+          ? { cls: "expired", text: "Expired" }
+          : { cls: "pending", text: `Pending · expires in ${i.minutesLeft} minutes` };
+---
+
+<Base title="My plans" active="plans">
+  <h1>My plans</h1>
+  <p class="lede">Plans and invitations for {me.name}. Confirmed plans are prototype reservations only.</p>
+
+  <section class="section" aria-labelledby="inv-heading">
+    <h2 id="inv-heading">Invitations for you</h2>
+    {
+      invitations.length === 0 ? (
+        <p class="lede">No teammate invitations.</p>
+      ) : (
+        invitations.map((i) => {
+          const label = inviteLabel(i);
+          return (
+            <article class="plan-card">
+              <div>
+                <h3>
+                  <a href={`/invitations/${i.invitation.id}`}>
+                    {i.room.name} · {fmtDate(i.plan.date)} · {fmtRange(i.segment.start, i.segment.end)}
+                  </a>
+                </h3>
+                <p class="utility" style="margin:4px 0 0">From {i.inviter.name} · {i.room.libraryName}</p>
+              </div>
+              <span class={`status status--${label.cls}`}>{label.text}</span>
+            </article>
+          );
+        })
+      )
+    }
+  </section>
+
+  <section class="section" aria-labelledby="plans-heading">
+    <h2 id="plans-heading">Plans</h2>
+    {
+      plans.length === 0 ? (
+        <p class="lede">
+          No plans yet. <a href="/">Search rooms</a> to start one.
+        </p>
+      ) : (
+        plans.map((p) => (
+          <article class="plan-card">
+            <div>
+              <h3>
+                <a href={`/plans/${p.plan.id}`}>
+                  {fmtDate(p.plan.date, true)} · {fmtRange(p.plan.reqStartMin, p.plan.reqEndMin)}
+                </a>
+              </h3>
+              <p class="utility" style="margin:4px 0 0">
+                {p.plan.organizerId === me.id ? "You organise" : `Organised by ${p.organizer.name}`} · {p.plan.people} people ·{" "}
+                {p.segments.length} segment{p.segments.length === 1 ? "" : "s"} · {fmtDuration(p.coverage.bookedMin)} booked
+              </p>
+              {p.segments.length > 0 && (
+                <ul>
+                  {p.segments.map((s) => (
+                    <li>
+                      {fmtRange(s.start, s.end)} · {s.room.name} · {s.status}
+                      {s.ownerName ? ` · ${s.ownerId === me.id ? "you" : s.ownerName}` : ""}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {p.plan.lastError && p.plan.status !== "confirmed" && (
+                <p class="utility" style="color:var(--danger);margin:6px 0 0">Last attempt failed: {p.plan.lastError}</p>
+              )}
+            </div>
+            <span class={`status status--${statusClass[p.displayStatus]}`}>{p.displayStatus}</span>
+          </article>
+        ))
+      )
+    }
+  </section>
+</Base>

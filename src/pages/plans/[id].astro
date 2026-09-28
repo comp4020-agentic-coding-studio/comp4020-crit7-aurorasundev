@@ -1,0 +1,367 @@
+---
+import Base from "../../layouts/Base.astro";
+import type { SegmentStatus } from "../../lib/planner";
+import { listUsers, planView } from "../../lib/repo";
+import { fmtDate, fmtDuration, fmtRange, fmtTime } from "../../lib/time";
+
+const view = planView(Astro.params.id ?? "");
+if (!view) Astro.response.status = 404;
+
+const me = Astro.locals.user;
+const back = Astro.url.pathname;
+const statusClass: Record<SegmentStatus, string> = {
+  Confirmed: "confirmed",
+  Assigned: "assigned",
+  Approved: "approved",
+  "Pending approval": "pending",
+  Declined: "declined",
+  Expired: "expired",
+  "Needs teammate": "needs",
+};
+
+const hyphenated = (min: number) => (min % 60 === 0 ? `${min / 60}-hour` : `${min}-minute`);
+const numberWord = (n: number) => ["no", "one", "two", "three", "four", "five", "six"][n] ?? String(n);
+
+let summary = { requested: 0, assigned: 0, awaiting: 0 };
+let description = "";
+let range = { start: 0, end: 0 };
+let isOrganizer = false;
+let needInvite: NonNullable<typeof view>["segments"] = [];
+let invited: NonNullable<typeof view>["segments"] = [];
+let pendingInvite: NonNullable<typeof view>["segments"] = [];
+let teammates: ReturnType<typeof listUsers> = [];
+let hours: number[] = [];
+const pct = (min: number) => ((Math.min(Math.max(min, range.start), range.end) - range.start) / (range.end - range.start)) * 100;
+
+if (view) {
+  const { plan, segments, coverage } = view;
+  isOrganizer = plan.organizerId === me.id;
+  summary = {
+    requested: coverage.requestedMin,
+    assigned: segments.filter((s) => s.ownerId === plan.organizerId).reduce((n, s) => n + s.end - s.start, 0),
+    awaiting: segments.filter((s) => !s.ownerId).reduce((n, s) => n + s.end - s.start, 0),
+  };
+  const roomNames = [...new Set(segments.map((s) => s.room.name))];
+  const length = hyphenated(coverage.requestedMin);
+  description = !segments.length
+    ? "This plan has no room segments yet."
+    : roomNames.length === 1
+      ? `A ${length} group discussion in ${roomNames[0]}, ${segments.length === 1 ? "in one booking segment" : `split into ${numberWord(segments.length)} booking segments`}.`
+      : `A ${length} group discussion across ${roomNames.join(" and ")}, with ${numberWord(coverage.roomChanges)} room change${coverage.roomChanges === 1 ? "" : "s"}.`;
+  const first = Math.min(plan.reqStartMin, ...segments.map((s) => s.start));
+  const last = Math.max(plan.reqEndMin, ...segments.map((s) => s.end));
+  range = { start: Math.floor(first / 60) * 60 - 60, end: Math.ceil(last / 60) * 60 + 60 };
+  for (let t = range.start; t <= range.end; t += 60) hours.push(t);
+  needInvite = segments.filter((s) => ["Needs teammate", "Declined", "Expired"].includes(s.status));
+  pendingInvite = segments.filter((s) => s.status === "Pending approval");
+  invited = segments.filter((s) => s.invite);
+  teammates = listUsers().filter((u) => u.id !== plan.organizerId);
+}
+
+const ownerLabel = (s: NonNullable<typeof view>["segments"][number]) => {
+  if (s.ownerId) return s.ownerId === me.id ? "You" : (s.ownerName ?? "");
+  if (s.status === "Pending approval") return "Awaiting teammate";
+  return "Needs a teammate";
+};
+const breakAfter = new Map(view?.coverage.breaks.map((b) => [b.afterIndex, b]) ?? []);
+const blockClass = (s: NonNullable<typeof view>["segments"][number]) =>
+  s.ownerId === view?.plan.organizerId ? "own" : s.ownerId || s.status === "Pending approval" ? "team" : "open";
+const inviteState = (s: NonNullable<typeof view>["segments"][number]) => {
+  const inv = s.invite!;
+  if (inv.status === "accepted") return { dot: "accepted", text: "Approved", extra: "" };
+  if (inv.status === "declined") return { dot: "declined", text: "Declined", extra: "" };
+  if (inv.expired) return { dot: "expired", text: "Expired", extra: "" };
+  return { dot: "pending", text: "Pending", extra: `expires in ${inv.minutesLeft} minute${inv.minutesLeft === 1 ? "" : "s"}` };
+};
+---
+
+<Base title={view ? "Review your plan" : "Plan not found"} active="plans" pageClass="page--split">
+  {
+    !view ? (
+      <div class="main-col" style="padding:36px 0 48px">
+        <h1>Plan not found</h1>
+        <p class="lede">This plan doesn't exist, or the demo data was reset.</p>
+        <p><a href="/">Search rooms</a> · <a href="/my-plans">My plans</a></p>
+      </div>
+    ) : (
+      <div class="with-rail" style="--rail:420px">
+        <div class="main-col">
+          <h1>Review your plan</h1>
+          <p class="lede">Check your booking details, teammate invitations and next steps.</p>
+          {!isOrganizer && (
+            <p class="info info--box" style="margin-top:16px">
+              <span class="info__icon" aria-hidden="true">i</span>
+              <span>This plan belongs to {view.organizer.name}. You can view it; only the organiser can change or confirm it.</span>
+            </p>
+          )}
+
+          <div class="summary">
+            <div>
+              <strong>{fmtDuration(summary.requested)} requested</strong>
+              <span>Group discussion</span>
+            </div>
+            <div class="summary__own">
+              <strong>{fmtDuration(summary.assigned)} assigned</strong>
+              <span>{isOrganizer ? "Your responsibility" : `${view.organizer.name}'s responsibility`}</span>
+            </div>
+            <div>
+              <strong>{fmtDuration(summary.awaiting)} awaiting approval</strong>
+              <span>Pending teammate confirmation</span>
+            </div>
+          </div>
+
+          <section class="section" aria-labelledby="time-plan">
+            <div class="review-head">
+              <h2 id="time-plan">Time plan</h2>
+              <span class="lede" style="margin:0">{fmtDate(view.plan.date, true)}</span>
+            </div>
+            <p class="lede" style="margin-top:6px">{description}</p>
+            <p class="utility" style="margin:4px 0 0">
+              Requested {fmtRange(view.plan.reqStartMin, view.plan.reqEndMin)} · {view.plan.people} people · usable discussion time{" "}
+              {fmtDuration(view.coverage.usableMin)}
+              {view.coverage.shortfallMin > 0 && (
+                <>
+                  {" "}· <span class="short">{fmtDuration(view.coverage.shortfallMin)} short</span>
+                </>
+              )}
+            </p>
+
+            {view.segments.length > 0 && (
+              <div class="timeline" aria-hidden="true">
+                <div class="timeline__scale">
+                  {hours.map((t) => <span style={`left:${pct(t)}%`}>{fmtTime(t)}</span>)}
+                </div>
+                <div class="timeline__ticks">
+                  {hours.map((t) => <i style={`left:${pct(t)}%`} />)}
+                </div>
+                <div class="timeline__track">
+                  {view.segments.map((s, i) => (
+                    <>
+                      <div class={`tl-block tl-block--${blockClass(s)}`} style={`left:${pct(s.start)}%;width:${pct(s.end) - pct(s.start)}%`}>
+                        <strong>{fmtRange(s.start, s.end)}</strong>
+                        {s.room.name}
+                      </div>
+                      {breakAfter.get(i) && (
+                        <div class="tl-block tl-block--break" style={`left:${pct(s.end)}%;width:${pct(s.end + breakAfter.get(i)!.minutes) - pct(s.end)}%`} />
+                      )}
+                    </>
+                  ))}
+                </div>
+                {view.coverage.breaks.length > 0 && (
+                  <p class="tl-legend">
+                    Hatched: {view.coverage.breaks.map((b) => `${b.minutes}-minute room change`).join(", ")}, not discussion time.
+                  </p>
+                )}
+              </div>
+            )}
+
+            <ol class="itinerary">
+              {view.segments.map((s, i) => (
+                <>
+                  <li>
+                    <div>
+                      <div class="it-time">{fmtRange(s.start, s.end)}</div>
+                      <div class="it-room">{s.room.name}</div>
+                    </div>
+                    <span class="sep" aria-hidden="true" />
+                    <div>
+                      <span class={`status status--${statusClass[s.status]}`}>{s.status}</span>
+                      <div class="it-owner">{ownerLabel(s)}</div>
+                    </div>
+                    <span class="chevron chevron--right" aria-hidden="true" />
+                  </li>
+                  {breakAfter.get(i) && (
+                    <li class="it-break">{breakAfter.get(i)!.minutes}-minute room change · not discussion time</li>
+                  )}
+                </>
+              ))}
+            </ol>
+          </section>
+
+          <section class="section" aria-labelledby="segments-heading">
+            <h3 id="segments-heading" class="segments-heading">Booking segments</h3>
+            <div class="table-box table-box--segments">
+              <table class="table">
+                <thead>
+                  <tr>
+                    <th scope="col">Time</th>
+                    <th scope="col">Room</th>
+                    <th scope="col">Status</th>
+                    <th scope="col">Booked by</th>
+                    {isOrganizer && view.plan.status !== "confirmed" && <th scope="col"><span class="sr-only">Actions</span></th>}
+                  </tr>
+                </thead>
+                <tbody>
+                  {view.segments.map((s) => (
+                    <tr>
+                      <td>{fmtRange(s.start, s.end).replace(" – ", "–")}</td>
+                      <td>{s.room.name}</td>
+                      <td><span class={`status status--${statusClass[s.status]}`}>{s.status}</span></td>
+                      <td>{ownerLabel(s)}</td>
+                      {isOrganizer && view.plan.status !== "confirmed" && (
+                        <td style="text-align:right">
+                          {!s.ownerId && (
+                            <form method="post" action="/api/plans/segments" class="inline-form">
+                              <input type="hidden" name="intent" value="take" />
+                              <input type="hidden" name="segmentId" value={s.id} />
+                              <input type="hidden" name="back" value={back} />
+                              <button class="btn btn--link">Take it myself</button>
+                            </form>
+                          )}{" "}
+                          <form method="post" action="/api/plans/segments" class="inline-form">
+                            <input type="hidden" name="intent" value="remove" />
+                            <input type="hidden" name="segmentId" value={s.id} />
+                            <input type="hidden" name="back" value={back} />
+                            <button class="btn btn--link">
+                              Remove<span class="sr-only"> {s.room.name} {fmtRange(s.start, s.end)}</span>
+                            </button>
+                          </form>
+                        </td>
+                      )}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {isOrganizer && view.plan.status !== "confirmed" && (
+              <p class="utility" style="margin-top:12px">
+                Need a different room or time? <a href={`/?date=${view.plan.date}&from=${fmtTime(view.plan.reqStartMin)}&until=${fmtTime(view.plan.reqEndMin)}&people=${view.plan.people}`}>Search again</a>
+              </p>
+            )}
+          </section>
+        </div>
+
+        <aside class="rail" aria-label="Invitations and next step">
+          <div class="rail__inner">
+            {view.plan.status !== "confirmed" && (
+              <section class="side-block" aria-labelledby="invite-heading">
+                <h2 id="invite-heading">Invite a teammate</h2>
+                {needInvite.length + pendingInvite.length === 0 && (
+                  <p>
+                    {invited.length
+                      ? "Every segment beyond the organiser's 2-hour allowance has an approved teammate."
+                      : "This plan fits within the organiser's 2-hour daily allowance, so no teammate is needed."}
+                  </p>
+                )}
+                {[...needInvite, ...pendingInvite]
+                  .sort((a, b) => a.start - b.start)
+                  .map((s) => {
+                    const pending = s.status === "Pending approval";
+                    return (
+                      <>
+                        <p>
+                          Send an invitation for the remaining {fmtDuration(s.end - s.start)} ({fmtRange(s.start, s.end)}).
+                        </p>
+                        {isOrganizer ? (
+                          <form method="post" action={`/api/plans/${view.plan.id}/invite`} class={pending ? "invite-form--pending" : undefined} data-once>
+                            <input type="hidden" name="segmentId" value={s.id} />
+                            <input type="hidden" name="back" value={back} />
+                            <label for={`teammate-${s.id}`}>Demo teammate</label>
+                            <select id={`teammate-${s.id}`} name="inviteeId" required disabled={pending}>
+                              {teammates.map((u) => (
+                                <option value={u.id} selected={pending && s.invite?.inviteeId === u.id}>{u.name}</option>
+                              ))}
+                            </select>
+                            <button class="btn btn--primary btn--block" style="margin-top:16px" disabled={pending}>
+                              Send invitation
+                            </button>
+                            {pending && <p class="caption">An invitation for this segment is pending, so it can't be sent again yet.</p>}
+                          </form>
+                        ) : (
+                          <p class="utility">Only {view.organizer.name} can send invitations for this plan.</p>
+                        )}
+                      </>
+                    );
+                  })}
+              </section>
+            )}
+
+            {invited.length > 0 && (
+              <section class="side-block" aria-labelledby="status-heading">
+                <h3 id="status-heading">Invitation status</h3>
+                {invited.map((s) => {
+                  const state = inviteState(s);
+                  return (
+                    <div class="invite-card">
+                      <span class={`dot dot--${state.dot}`} aria-hidden="true" />
+                      <div>
+                        <div class="invite-card__title">
+                          {state.text}
+                          {state.extra && <span style="font-weight:600"> · {state.extra}</span>}
+                        </div>
+                        <div class="invite-card__line">Invited: {s.invite!.inviteeName}</div>
+                        <div class="invite-card__line">{fmtRange(s.start, s.end)} · {s.room.name}</div>
+                        {s.invite!.inviteeId === me.id && s.invite!.status === "pending" && !s.invite!.expired && (
+                          <a href={`/invitations/${s.invite!.id}`}>Answer this invitation</a>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </section>
+            )}
+
+            <p class="info info--box" style="margin-top:16px">
+              <span class="info__icon" aria-hidden="true">i</span>
+              <span>Each participant confirms their own segment. An invitation does not hold the room.</span>
+            </p>
+
+            <hr class="side-rule" />
+
+            <section class="side-block" aria-labelledby="next-heading">
+              <h3 id="next-heading">Next step</h3>
+              {view.plan.status === "confirmed" ? (
+                <>
+                  <p class="flash flash--notice" role="status" style="margin:0">
+                    <strong>Plan confirmed in this prototype.</strong>
+                  </p>
+                  <p class="caption">
+                    Reserved in this prototype's database only. Nothing was booked with ANU Library.
+                  </p>
+                </>
+              ) : (
+                <>
+                  {view.plan.lastError && (
+                    <div class="flash flash--error" role="alert">
+                      <strong>Confirmation failed:</strong> {view.plan.lastError} Your draft is unchanged.{" "}
+                      <a href={`/?date=${view.plan.date}&from=${fmtTime(view.plan.reqStartMin)}&until=${fmtTime(view.plan.reqEndMin)}&people=${view.plan.people}`}>Search again</a>
+                    </div>
+                  )}
+                  {isOrganizer ? (
+                    <form method="post" action={`/api/plans/${view.plan.id}/confirm`} data-once>
+                      <input type="hidden" name="back" value={back} />
+                      {view.canConfirm && view.coverage.shortfallMin > 0 && (
+                        <label class="check">
+                          <input type="checkbox" name="acceptShort" value="yes" required />
+                          <span>
+                            Confirm as a partial plan: it is {fmtDuration(view.coverage.shortfallMin)} short of the requested time.
+                          </span>
+                        </label>
+                      )}
+                      <button class="btn btn--primary btn--block" disabled={!view.canConfirm}>
+                        Confirm plan
+                      </button>
+                      <p class="caption caption--center">
+                        {view.canConfirm
+                          ? "Confirming rechecks room availability and each owner's daily limit."
+                          : view.blockers.includes("Add at least one room segment.")
+                            ? "Add at least one room segment first."
+                            : "You can confirm your plan once all bookings are approved."}
+                      </p>
+                    </form>
+                  ) : (
+                    <p class="caption">Only {view.organizer.name} can confirm this plan.</p>
+                  )}
+                </>
+              )}
+              <p class="info" style="margin-top:16px">
+                <span class="info__icon" aria-hidden="true">i</span>
+                <span>Prototype bookings only.</span>
+              </p>
+            </section>
+          </div>
+        </aside>
+      </div>
+    )
+  }
+</Base>

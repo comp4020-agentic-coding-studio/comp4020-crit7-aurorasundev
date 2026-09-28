@@ -1,0 +1,173 @@
+---
+import { listUsers } from "../lib/repo";
+import "../styles.css";
+
+interface Props {
+  title: string;
+  active?: "search" | "plans";
+  pageClass?: string;
+}
+
+const { title, active, pageClass = "" } = Astro.props;
+const user = Astro.locals.user;
+const users = listUsers();
+const back = `${Astro.url.pathname}${Astro.url.search}`;
+const cleanUrl = new URL(Astro.url);
+cleanUrl.searchParams.delete("error");
+cleanUrl.searchParams.delete("notice");
+const refreshHref = `${cleanUrl.pathname}${cleanUrl.search}`;
+const error = Astro.url.searchParams.get("error");
+const notice = Astro.url.searchParams.get("notice");
+const links = [
+  { href: "/", label: "Search rooms", key: "search" },
+  { href: "/my-plans", label: "My plans", key: "plans" },
+];
+---
+
+<!doctype html>
+<html lang="en-AU">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="An independent course prototype for planning ANU study-room sessions across libraries. Prototype bookings only." />
+    <title>{title} · Study Room Planner</title>
+  </head>
+  <body data-user={user.id}>
+    <a class="skip" href="#main">Skip to content</a>
+    <header class="site-header">
+      <div class="site-header__inner">
+        <a class="brand" href="/">Study Room Planner</a>
+        <nav class="main-nav" aria-label="Main">
+          {
+            links.map((link) => (
+              <a href={link.href} aria-current={active === link.key ? "page" : undefined}>
+                {link.label}
+              </a>
+            ))
+          }
+        </nav>
+        <details class="identity">
+          <summary>
+            <span>Demo student <span class="identity__who">· {user.name}</span></span>
+            <span class="chevron" aria-hidden="true"></span>
+          </summary>
+          <div class="identity__panel">
+            <p class="utility">Switch demo identity to see both sides of an invitation. These are fictional test users.</p>
+            <div class="stack-sm">
+              {
+                users.map((u) => (
+                  <form method="post" action="/api/identity">
+                    <input type="hidden" name="user" value={u.id} />
+                    <input type="hidden" name="back" value={back} />
+                    <button class="btn btn--small identity__user" aria-pressed={u.id === user.id ? "true" : "false"}>
+                      {u.name}
+                    </button>
+                  </form>
+                ))
+              }
+            </div>
+            <hr class="menu-rule" />
+            <form method="post" action="/api/demo/reset">
+              <input type="hidden" name="back" value="/" />
+              <button class="btn btn--small btn--block">Reset demo data</button>
+            </form>
+          </div>
+        </details>
+        <details class="mobile-menu">
+          <summary>
+            <span class="hamburger" aria-hidden="true"></span> Menu
+          </summary>
+          <div class="mobile-menu__panel">
+            <nav aria-label="Mobile">
+              {
+                links.map((link) => (
+                  <a href={link.href} aria-current={active === link.key ? "page" : undefined}>
+                    {link.label}
+                  </a>
+                ))
+              }
+            </nav>
+            <hr class="menu-rule" />
+            <p class="utility">Demo student: <strong>{user.name}</strong></p>
+            <div class="stack-sm">
+              {
+                users
+                  .filter((u) => u.id !== user.id)
+                  .map((u) => (
+                    <form method="post" action="/api/identity">
+                      <input type="hidden" name="user" value={u.id} />
+                      <input type="hidden" name="back" value={back} />
+                      <button class="btn btn--small btn--block">Switch to {u.name}</button>
+                    </form>
+                  ))
+              }
+              <form method="post" action="/api/demo/reset">
+                <input type="hidden" name="back" value="/" />
+                <button class="btn btn--small btn--block">Reset demo data</button>
+              </form>
+            </div>
+          </div>
+        </details>
+      </div>
+    </header>
+    <main id="main" class={`page ${pageClass}`}>
+      {
+        error && (
+          <div class="flash flash--error" role="alert">
+            <strong>Not done:</strong> <span>{error}</span>
+          </div>
+        )
+      }
+      {
+        notice && (
+          <div class="flash flash--notice" role="status">
+            <span>{notice}</span>
+          </div>
+        )
+      }
+      <slot />
+    </main>
+    <footer class="site-footer">
+      <div class="site-footer__inner">
+        <span>Prototype bookings only — not real ANU Library reservations</span>
+        <span>Study Room Planner · An independent course prototype · <a href="/readme/">About</a></span>
+      </div>
+    </footer>
+    <div class="live-banner" role="status" aria-live="polite" hidden>
+      <span>Something changed in your plans.</span>
+      <a href={refreshHref}>Refresh</a>
+    </div>
+    <script>
+      // The other demo student's actions arrive over SSE; offer a refresh
+      // rather than reloading under someone mid-form.
+      const me = document.body.dataset.user;
+      const banner = document.querySelector<HTMLElement>(".live-banner");
+      // Close the stream when the page is hidden: pages kept in the
+      // back/forward cache would otherwise hold open connections until the
+      // browser's per-host limit blocks further navigation.
+      let source: EventSource | null = null;
+      const connect = () => {
+        source = new EventSource("/api/events");
+        source.addEventListener("change", (event) => {
+          const data = JSON.parse((event as MessageEvent).data) as { users: string[] };
+          if (banner && me && data.users.includes(me)) banner.hidden = false;
+        });
+      };
+      connect();
+      addEventListener("pagehide", () => {
+        source?.close();
+        source = null;
+      });
+      addEventListener("pageshow", (event) => {
+        if ((event as PageTransitionEvent).persisted && !source) connect();
+      });
+      document.querySelectorAll<HTMLFormElement>("form[data-once]").forEach((form) => {
+        form.addEventListener("submit", () => {
+          form.querySelectorAll<HTMLButtonElement>("button[type=submit], button:not([type])").forEach((b) => {
+            b.disabled = true;
+          });
+        });
+      });
+    </script>
+  </body>
+</html>

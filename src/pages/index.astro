@@ -1,53 +1,567 @@
 ---
-import { listMessages } from "../lib/db";
-import "../styles.css";
+import PlanRail from "../components/PlanRail.astro";
+import Base from "../layouts/Base.astro";
+import { freeIntervals, type Interval, overlaps, suggest } from "../lib/planner";
+import { busyFor, currentPlan, listLibraries, listRooms, planView, type RoomView } from "../lib/repo";
+import { scenarioDates } from "../lib/seed";
+import {
+  addDays,
+  DAILY_LIMIT_MIN,
+  DEMO_WINDOW_DAYS,
+  demoWindow,
+  fmtDate,
+  fmtDuration,
+  fmtRange,
+  fmtTime,
+  inDemoWindow,
+  parseTime,
+  SLOT_MIN,
+} from "../lib/time";
 
-const messages = listMessages();
+const q = Astro.url.searchParams;
+const scenarios = scenarioDates();
+const win = demoWindow();
+const libraries = listLibraries();
+const windowDates = Array.from({ length: DEMO_WINDOW_DAYS }, (_, i) => addDays(win.first, i));
+
+const date = q.get("date") ?? scenarios.crossRoom;
+const fromText = q.get("from") ?? "13:00";
+const untilText = q.get("until") ?? "15:00";
+const people = Number(q.get("people") ?? "4");
+const libraryParam = q.get("library") ?? "all";
+const library = libraries.some((l) => l.id === libraryParam) ? libraryParam : "all";
+
+const reqStart = parseTime(fromText);
+const reqEnd = parseTime(untilText);
+
+const errors: Record<string, string> = {};
+if (!inDemoWindow(date)) {
+  errors.date = `Choose a date from ${fmtDate(win.first)} to ${fmtDate(win.last)}. Demo availability exists only for this window.`;
+}
+if (reqStart === null || reqStart % SLOT_MIN !== 0) errors.from = "Choose a start time on the half hour.";
+if (reqEnd === null || reqEnd % SLOT_MIN !== 0) errors.until = "Choose an end time on the half hour.";
+if (reqStart !== null && reqEnd !== null && reqEnd <= reqStart) errors.until = "End time must be after the start time.";
+if (!Number.isInteger(people) || people < 1 || people > 8) errors.people = "Choose between 1 and 8 people.";
+const valid = Object.keys(errors).length === 0;
+
+const OPEN = 8 * 60;
+const CLOSE = 20 * 60;
+const timeOptions: number[] = [];
+for (let t = OPEN; t <= CLOSE; t += SLOT_MIN) timeOptions.push(t);
+
+const user = Astro.locals.user;
+const back = `${Astro.url.pathname}${Astro.url.search}`;
+const plan = currentPlan(user.id);
+const view = plan ? planView(plan.id) : undefined;
+const planOnThisDate = view && view.plan.date === date ? view.segments : [];
+const segmentsByRoom = new Map<string, typeof planOnThisDate>();
+for (const s of planOnThisDate) {
+  segmentsByRoom.set(s.room.id, [...(segmentsByRoom.get(s.room.id) ?? []), s]);
+}
+
+const allRooms = listRooms();
+const shownRooms = library === "all" ? allRooms : allRooms.filter((r) => r.libraryId === library);
+const busy = valid ? busyFor(date) : new Map<string, Interval[]>();
+const rs = reqStart ?? 0;
+const re = reqEnd ?? 0;
+const options = valid ? suggest(shownRooms, busy, { start: rs, end: re, people }) : [];
+const roomById = new Map(allRooms.map((r) => [r.id, r]));
+
+const viewStart = Math.max(OPEN, Math.floor(rs / 60) * 60 - 60);
+const viewEnd = Math.min(CLOSE, Math.max(Math.ceil(re / 60) * 60 + 150, viewStart + 5 * 60));
+const span = viewEnd - viewStart;
+const pct = (min: number) => ((Math.min(Math.max(min, viewStart), viewEnd) - viewStart) / span) * 100;
+const slots: number[] = [];
+for (let t = viewStart; t < viewEnd; t += SLOT_MIN) slots.push(t);
+const hours = slots.filter((t) => t % 60 === 0);
+
+type CellState = "closed" | "busy" | "selected" | "small" | "free";
+function cellState(room: RoomView, t: number): CellState {
+  const slot = { start: t, end: t + SLOT_MIN };
+  if (t < room.opensMin || t + SLOT_MIN > room.closesMin) return "closed";
+  if ((segmentsByRoom.get(room.id) ?? []).some((s) => overlaps(s, slot))) return "selected";
+  if ((busy.get(room.id) ?? []).some((b) => overlaps(b, slot))) return "busy";
+  if (room.capacity < people) return "small";
+  return "free";
+}
+const stateText: Record<CellState, string> = {
+  closed: "closed",
+  busy: "unavailable",
+  selected: "selected, in your plan",
+  small: `too small for ${people}`,
+  free: "available",
+};
+
+function freeInRequest(room: RoomView) {
+  return freeIntervals(room, busy)
+    .map((f) => ({ start: Math.max(f.start, rs), end: Math.min(f.end, re) }))
+    .filter((f) => f.end - f.start >= SLOT_MIN)
+    .filter((f) => !(segmentsByRoom.get(room.id) ?? []).some((s) => overlaps(s, f)));
+}
+
+function rowSummary(room: RoomView): string {
+  if (room.capacity < people) return `Seats ${room.capacity}, too small for ${people} people.`;
+  const free = freeIntervals(room, busy)
+    .map((f) => ({ start: Math.max(f.start, viewStart), end: Math.min(f.end, viewEnd) }))
+    .filter((f) => f.end > f.start);
+  const segs = segmentsByRoom.get(room.id) ?? [];
+  const parts = [];
+  if (segs.length) parts.push(`Selected: ${segs.map((s) => fmtRange(s.start, s.end)).join(", ")}.`);
+  parts.push(free.length ? `Available ${free.map((f) => fmtRange(f.start, f.end)).join(", ")}.` : "Unavailable all shown hours.");
+  return parts.join(" ");
+}
+
+const hidden = { date, reqStart: rs, reqEnd: re, people };
+const libraryHref = (id: string) => {
+  const url = new URL(Astro.url);
+  url.searchParams.delete("error");
+  url.searchParams.delete("notice");
+  if (id === "all") url.searchParams.delete("library");
+  else url.searchParams.set("library", id);
+  return `${url.pathname}${url.search}`;
+};
+const scenarioHref = (d: string, from: string, until: string) => `/?date=${d}&from=${from}&until=${until}&people=4`;
+const segmentCount = view?.segments.length ?? 0;
+const planSegments = view?.segments ?? [];
+
+const rank = (r: RoomView) => {
+  if (segmentsByRoom.has(r.id)) return 0;
+  const free = r.capacity >= people ? freeInRequest(r) : [];
+  if (free.some((f) => f.start === rs && f.end === re)) return 1;
+  return free.length ? 2 : 3;
+};
+const recordRooms = [...shownRooms].sort((a, b) => rank(a) - rank(b) || a.sort - b.sort);
 ---
 
-<!doctype html>
-<html lang="en-AU">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>COMP4020 prototype</title>
-  </head>
-  <body>
-    <nav aria-label="site">
-      <a href="/">Guestbook</a>
-      <a href="/readme/">About</a>
-    </nav>
-    <main>
-      <h1>Guestbook</h1>
-      <p>
-        A minimal full-stack starter: messages live in SQLite on the machine's
-        volume (state survives a reload and a redeploy), and new messages
-        appear in every open tab over a server-sent-events stream — open this
-        page twice and sign it in one. Replace all of this with your own
-        prototype.
-      </p>
-      <form method="post" action="/api/messages">
-        <label for="body">Leave a message</label>
-        <input id="body" name="body" required maxlength="500" />
-        <button>Sign</button>
+<Base title="Search rooms" active="search" pageClass="page--split page--search">
+  <div class="with-rail">
+    <div class="main-col">
+      <h1>Find a room for your whole session</h1>
+      <form class="search-form" method="get" action="/" novalidate>
+        <div class="field--date">
+          <label for="date">Date</label>
+          <select
+            id="date"
+            name="date"
+            required
+            aria-invalid={errors.date ? "true" : undefined}
+            aria-describedby={errors.date ? "date-error" : undefined}
+          >
+            {!inDemoWindow(date) && <option value={date} selected>Choose a date</option>}
+            {windowDates.map((d) => <option value={d} selected={d === date}>{fmtDate(d)}</option>)}
+          </select>
+        </div>
+        <div>
+          <label for="from">From</label>
+          <select id="from" name="from" aria-invalid={errors.from ? "true" : undefined} aria-describedby={errors.from ? "from-error" : undefined}>
+            {timeOptions.slice(0, -1).map((t) => <option value={fmtTime(t)} selected={fmtTime(t) === fromText}>{fmtTime(t)}</option>)}
+          </select>
+        </div>
+        <div>
+          <label for="until">Until</label>
+          <select id="until" name="until" aria-invalid={errors.until ? "true" : undefined} aria-describedby={errors.until ? "until-error" : undefined}>
+            {timeOptions.slice(1).map((t) => <option value={fmtTime(t)} selected={fmtTime(t) === untilText}>{fmtTime(t)}</option>)}
+          </select>
+        </div>
+        <div class="field--people">
+          <label for="people">People</label>
+          <select id="people" name="people" aria-invalid={errors.people ? "true" : undefined} aria-describedby={errors.people ? "people-error" : undefined}>
+            {[1, 2, 3, 4, 5, 6, 7, 8].map((n) => <option value={n} selected={n === people}>{n}</option>)}
+          </select>
+        </div>
+        {library !== "all" && <input type="hidden" name="library" value={library} />}
+        <div class="submit">
+          <button class="btn btn--primary btn--block">Search rooms</button>
+        </div>
       </form>
-      <ul id="messages">
-        {messages.map((message) => <li>{message.body}</li>)}
-      </ul>
-    </main>
-    <script>
-      // The live half of the demo: subscribe to the SSE stream and prepend
-      // messages as they arrive. The form itself needs none of this — its
-      // POST + redirect re-renders the submitting tab from SQLite; this
-      // stream is how every other tab finds out.
-      const list = document.querySelector("#messages");
-      const source = new EventSource("/api/events");
-      source.addEventListener("message", (event) => {
-        const message = JSON.parse(event.data);
-        const item = document.createElement("li");
-        item.textContent = message.body;
-        list?.prepend(item);
+      {errors.date && <p class="field-error" id="date-error">{errors.date}</p>}
+      {errors.from && <p class="field-error" id="from-error">{errors.from}</p>}
+      {errors.until && <p class="field-error" id="until-error">{errors.until}</p>}
+      {errors.people && <p class="field-error" id="people-error">{errors.people}</p>}
+      <p class="demo-links">
+        <span>Try demo scenario:</span>
+        <a href={scenarioHref(scenarios.crossRoom, "13:00", "15:00")}>Cross-room comparison ({fmtDate(scenarios.crossRoom)})</a>
+        <a href={scenarioHref(scenarios.team, "13:00", "16:00")}>Three-hour team plan ({fmtDate(scenarios.team)})</a>
+      </p>
+      <hr class="full-rule" />
+
+      {
+        valid && (
+          <section class="suggest" aria-labelledby="options-heading">
+            <div class="suggest__head">
+              <h2 id="options-heading">
+                {options[0]?.kind === "full" ? "Rooms free for your whole session" : "Suggested plans"}
+              </h2>
+              <span class="utility">
+                {fmtDate(date)} · {fmtRange(rs, re)} · {people} {people === 1 ? "person" : "people"}
+              </span>
+            </div>
+            {options.length === 0 ? (
+              <p class="empty">
+                No room {library === "all" ? "" : "in this library "}has free time between {fmtTime(rs)} and {fmtTime(re)} for {people} people. Try another time, date or library.
+              </p>
+            ) : (
+              <>
+                {options[0].kind !== "full" && (
+                  <p class="info">
+                    <span class="info__icon" aria-hidden="true">i</span>
+                    <span>No single room is free for the whole period. Changing rooms takes 5 minutes within a library and 15 between libraries (demo assumptions), so splits are never a full uninterrupted session.</span>
+                  </p>
+                )}
+                <ul class="options">
+                  {options.map((o) => (
+                    <li class="option">
+                      <div>
+                        <div class={`option__kind option__kind--${o.kind}`}>
+                          {o.kind === "full"
+                            ? "Full match · one room"
+                            : o.kind === "split"
+                              ? `Split · 1 room change${o.crossLibrary ? " between libraries" : ""}`
+                              : "Partial · covers part of your time"}
+                        </div>
+                        <div class="option__route">
+                          {o.segments.map((s, i) => (
+                            <span>
+                              {i > 0 && " → "}
+                              {roomById.get(s.roomId)?.name} {fmtRange(s.start, s.end)}
+                            </span>
+                          ))}
+                        </div>
+                        <div class="option__meta">
+                          {o.coverage.fullMatch ? (
+                            <>Usable discussion time {fmtDuration(o.coverage.usableMin)}: covers your whole session.</>
+                          ) : (
+                            <>
+                              Usable discussion time {fmtDuration(o.coverage.usableMin)} ·{" "}
+                              <span class="short">{fmtDuration(o.coverage.shortfallMin)} short</span>
+                              {o.coverage.breaks.length > 0 && <> ({o.coverage.breaks[0].minutes}-minute room change)</>}
+                            </>
+                          )}
+                          {re - rs > DAILY_LIMIT_MIN && <> · Over 2 hours, so part needs a teammate.</>}
+                        </div>
+                      </div>
+                      <form method="post" action="/api/plans/segments">
+                        <input type="hidden" name="intent" value="add-option" />
+                        {Object.entries(hidden).map(([k, v]) => <input type="hidden" name={k} value={v} />)}
+                        <input type="hidden" name="segments" value={o.segments.map((s) => `${s.roomId}|${s.start}|${s.end}`).join(",")} />
+                        <input type="hidden" name="back" value={back} />
+                        <button class="btn btn--small">Add to plan</button>
+                      </form>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
+          </section>
+        )
+      }
+
+      {
+        valid && (
+          <section class="section" aria-labelledby="rooms-heading">
+            <div class="section__head rooms-head">
+              <h2 id="rooms-heading">Available rooms</h2>
+              <form class="library-select" method="get" action="/">
+                {Object.entries({ date, from: fromText, until: untilText, people }).map(([k, v]) => (
+                  <input type="hidden" name={k} value={v} />
+                ))}
+                <label for="library-mobile" class="sr-only">Library</label>
+                <select id="library-mobile" name="library" data-autosubmit>
+                  <option value="all" selected={library === "all"}>All libraries</option>
+                  {libraries.map((l) => <option value={l.id} selected={library === l.id}>{l.name}</option>)}
+                </select>
+                <noscript><button class="btn btn--small">Show</button></noscript>
+              </form>
+            </div>
+            <nav class="chips" aria-label="Filter by library">
+              <a class="chip" href={libraryHref("all")} aria-current={library === "all" ? "true" : undefined}>All libraries</a>
+              {libraries.map((l) => (
+                <a class="chip" href={libraryHref(l.id)} aria-current={library === l.id ? "true" : undefined}>{l.name}</a>
+              ))}
+            </nav>
+
+            <table class="grid" aria-describedby="grid-help">
+              <caption class="sr-only">
+                Room availability on {fmtDate(date)}, {fmtTime(viewStart)} to {fmtTime(viewEnd)}. Your requested time is {fmtRange(rs, re)}.
+              </caption>
+              <colgroup>
+                <col class="col-room" />
+                <col class="col-cap" />
+                <col />
+              </colgroup>
+              <thead>
+                <tr>
+                  <th scope="col">Room</th>
+                  <th scope="col" class="cap-head">Capacity</th>
+                  <th scope="col" class="time-head">
+                    <span class="sr-only">Time from {fmtTime(viewStart)} to {fmtTime(viewEnd)}</span>
+                    {hours.map((t) => (
+                      <span aria-hidden="true" style={`left:${pct(t)}%`}>{fmtTime(t)}</span>
+                    ))}
+                  </th>
+                </tr>
+              </thead>
+              {libraries
+                .filter((l) => shownRooms.some((r) => r.libraryId === l.id))
+                .map((l, li) => (
+                  <tbody>
+                    {li > 0 && (
+                      <tr class="gap-row" aria-hidden="true">
+                        <td colspan="3"></td>
+                      </tr>
+                    )}
+                    <tr class="lib-row">
+                      <th scope="rowgroup" colspan="3">{l.name}</th>
+                    </tr>
+                    {shownRooms
+                      .filter((r) => r.libraryId === l.id)
+                      .map((r) => {
+                        const segs = segmentsByRoom.get(r.id) ?? [];
+                        const blocks = (busy.get(r.id) ?? []).filter((b) => b.end > viewStart && b.start < viewEnd);
+                        return (
+                          <tr class={segs.length ? "has-plan" : undefined}>
+                            <th scope="row">{r.name}</th>
+                            <td class="cap">{r.capacity}</td>
+                            <td class="track-cell">
+                              <span class="sr-only">{rowSummary(r)}</span>
+                              <div class="track" style={`--half:${(SLOT_MIN / span) * 100}%`} data-room={r.id} data-room-name={r.name}>
+                                {r.opensMin > viewStart && <span class="track__closed" style={`left:0;width:${pct(r.opensMin)}%`} />}
+                                {r.closesMin < viewEnd && <span class="track__closed" style={`left:${pct(r.closesMin)}%;right:0`} />}
+                                {blocks.map((b) => (
+                                  <span class="track__bar" style={`left:${pct(b.start)}%;width:${pct(b.end) - pct(b.start)}%`} />
+                                ))}
+                                <div class="track__slots">
+                                  {slots.map((t) => {
+                                    const state = cellState(r, t);
+                                    const label = `${r.name} ${fmtRange(t, t + SLOT_MIN)}: ${stateText[state]}`;
+                                    return state === "free" ? (
+                                      <button
+                                        type="submit"
+                                        form="grid-add"
+                                        name="slot"
+                                        value={`${r.id}|${t}`}
+                                        class="slot"
+                                        aria-label={`${label}. Add to plan`}
+                                        data-slot={t}
+                                      />
+                                    ) : (
+                                      <span class="slot slot--off" data-slot={t} data-state={state} />
+                                    );
+                                  })}
+                                </div>
+                                {segs.map((s) => (
+                                  <button
+                                    type="submit"
+                                    form={`rm-${s.id}`}
+                                    class="track__sel"
+                                    style={`left:${pct(s.start)}%;width:${pct(s.end) - pct(s.start)}%`}
+                                    aria-label={`${r.name} ${fmtRange(s.start, s.end)} selected. Remove from plan`}
+                                    title="Remove from plan"
+                                  >
+                                    {fmtRange(s.start, s.end)}
+                                  </button>
+                                ))}
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                  </tbody>
+                ))}
+            </table>
+            <div class="section__head" style="margin-top:14px">
+              <ul class="legend legend--grid" aria-label="Legend">
+                <li><span class="swatch swatch--free" aria-hidden="true"></span>Available</li>
+                <li><span class="swatch swatch--busy" aria-hidden="true"></span>Unavailable</li>
+                <li><span class="swatch swatch--selected" aria-hidden="true"></span>Selected</li>
+              </ul>
+              <p class="utility grid-help" id="grid-help" style="margin:0">
+                Click a start and an end slot in one room, then Add to plan. Click a selected block to remove it.
+              </p>
+            </div>
+            <form id="grid-add" class="selection-bar" method="post" action="/api/plans/segments" hidden>
+              <input type="hidden" name="intent" value="add" />
+              {Object.entries(hidden).map(([k, v]) => <input type="hidden" name={k} value={v} />)}
+              <input type="hidden" name="roomId" value="" />
+              <input type="hidden" name="start" value="" />
+              <input type="hidden" name="end" value="" />
+              <input type="hidden" name="back" value={back} />
+              <span aria-live="polite" data-selection-text>Selected</span>
+              <button class="btn btn--small btn--primary" style="min-height:36px;font-size:15px" data-add>Add to plan</button>
+              <button type="button" class="btn btn--small" data-clear>Clear</button>
+            </form>
+            {planSegments.map((s) => (
+              <form id={`rm-${s.id}`} method="post" action="/api/plans/segments" hidden>
+                <input type="hidden" name="intent" value="remove" />
+                <input type="hidden" name="segmentId" value={s.id} />
+                <input type="hidden" name="back" value={back} />
+              </form>
+            ))}
+
+            <ul class="records">
+              {recordRooms.map((r) => {
+                const segs = segmentsByRoom.get(r.id) ?? [];
+                const free = r.capacity >= people ? freeInRequest(r) : [];
+                const badge = segs.length
+                  ? { cls: "selected", text: "Selected" }
+                  : free.some((f) => f.start === rs && f.end === re)
+                    ? { cls: "free", text: "Free for your time" }
+                    : free.length
+                      ? { cls: "free", text: "Partly free" }
+                      : { cls: "none", text: r.capacity < people ? "Too small" : "Unavailable" };
+                return (
+                  <li>
+                    <details class="record">
+                      <summary>
+                        <div class="record__head">
+                          <div>
+                            <div class="record__name">{r.name}</div>
+                            <div class="record__meta">{r.libraryName} · Seats {r.capacity}</div>
+                          </div>
+                          <span class={`badge badge--${badge.cls}`}>
+                            {badge.cls === "selected" && <span class="tick" aria-hidden="true">✓</span>}
+                            {badge.text}
+                          </span>
+                          <span class="chevron chevron--right" aria-hidden="true" />
+                        </div>
+                        <div class="mini" aria-hidden="true">
+                          <div class="mini-scale">
+                            {hours.map((t) => <span style={`left:${pct(t)}%`}>{fmtTime(t)}</span>)}
+                          </div>
+                          <div class="mini-rail">
+                            {slots.map((t) => {
+                              const state = cellState(r, t);
+                              return <span class={state === "selected" ? "sel" : state === "busy" ? "busy" : state === "closed" ? "closed" : ""} />;
+                            })}
+                          </div>
+                        </div>
+                        <div class="mini-caption">
+                          {segs.length
+                            ? segs.map((s) => fmtRange(s.start, s.end)).join(", ")
+                            : free.length
+                              ? `Free ${free.map((f) => fmtRange(f.start, f.end)).join(", ")}`
+                              : r.capacity < people
+                                ? `Seats ${r.capacity}, too small for ${people}`
+                                : "No free time in your period"}
+                        </div>
+                        <span class="sr-only">{rowSummary(r)}</span>
+                      </summary>
+                      <div class="record__actions">
+                        {segs.map((s) => (
+                          <button type="submit" form={`rm-${s.id}`} class="btn btn--small">
+                            Remove {fmtRange(s.start, s.end)} from plan
+                          </button>
+                        ))}
+                        {free.map((f) => (
+                          <form method="post" action="/api/plans/segments">
+                            <input type="hidden" name="intent" value="add" />
+                            {Object.entries(hidden).map(([k, v]) => <input type="hidden" name={k} value={v} />)}
+                            <input type="hidden" name="roomId" value={r.id} />
+                            <input type="hidden" name="start" value={f.start} />
+                            <input type="hidden" name="end" value={f.end} />
+                            <input type="hidden" name="back" value={back} />
+                            <button class="btn btn--small">
+                              Add {fmtRange(f.start, f.end)} to plan<span class="sr-only"> in {r.name}</span>
+                            </button>
+                          </form>
+                        ))}
+                        {!segs.length && !free.length && <span class="utility">Nothing to add for your requested time.</span>}
+                      </div>
+                    </details>
+                  </li>
+                );
+              })}
+            </ul>
+            <p class="info mobile-note">
+              <span class="info__icon" aria-hidden="true">i</span>
+              <span>Prototype bookings only.</span>
+            </p>
+          </section>
+        )
+      }
+    </div>
+    <aside class="rail rail--search" aria-label="Your plan">
+      <div class="rail__inner">
+        <PlanRail view={view} back={back} search={hidden} />
+      </div>
+    </aside>
+  </div>
+  <div class="plan-bar">
+    <span><strong>Your plan</strong> · {segmentCount} segment{segmentCount === 1 ? "" : "s"} · {fmtDuration(view?.coverage.bookedMin ?? 0)}</span>
+    {
+      view && segmentCount > 0 ? (
+        <a class="btn btn--small" href={`/plans/${view.plan.id}`}>Review</a>
+      ) : (
+        <button class="btn btn--small" disabled>Review</button>
+      )
+    }
+  </div>
+</Base>
+
+<script>
+  document.querySelectorAll<HTMLSelectElement>("select[data-autosubmit]").forEach((select) => {
+    select.addEventListener("change", () => select.form?.submit());
+  });
+
+  // Range selection: the first click marks a start slot, a second click in
+  // the same room marks the end; the selection bar then adds the range.
+  // Without JavaScript each slot button simply adds its own half hour.
+  const form = document.getElementById("grid-add") as HTMLFormElement | null;
+  const text = form?.querySelector<HTMLElement>("[data-selection-text]");
+  const fmt = (min: number) => `${String(Math.floor(min / 60)).padStart(2, "0")}:${String(min % 60).padStart(2, "0")}`;
+  let anchor: { track: HTMLElement; slot: number } | null = null;
+
+  const field = (name: string) => form?.elements.namedItem(name) as HTMLInputElement;
+
+  function clearPressed() {
+    document.querySelectorAll('button.slot[aria-pressed="true"]').forEach((b) => b.setAttribute("aria-pressed", "false"));
+  }
+
+  function select(track: HTMLElement, start: number, end: number) {
+    if (!form || !text) return;
+    clearPressed();
+    track.querySelectorAll<HTMLButtonElement>("button.slot").forEach((b) => {
+      const t = Number(b.dataset.slot);
+      b.setAttribute("aria-pressed", t >= start && t < end ? "true" : "false");
+    });
+    field("roomId").value = track.dataset.room ?? "";
+    field("start").value = String(start);
+    field("end").value = String(end);
+    text.textContent = `Selected: ${track.dataset.roomName} · ${fmt(start)} – ${fmt(end)}`;
+    form.hidden = false;
+  }
+
+  document.querySelectorAll<HTMLButtonElement>("button.slot").forEach((button) => {
+    button.setAttribute("aria-pressed", "false");
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      const track = button.closest<HTMLElement>(".track");
+      if (!track) return;
+      const slot = Number(button.dataset.slot);
+      if (!anchor || anchor.track !== track) {
+        anchor = { track, slot };
+        select(track, slot, slot + 30);
+        return;
+      }
+      const start = Math.min(anchor.slot, slot);
+      const end = Math.max(anchor.slot, slot) + 30;
+      const blocked = [...track.querySelectorAll<HTMLElement>(".slot--off")].some((cell) => {
+        const t = Number(cell.dataset.slot);
+        return t >= start && t < end;
       });
-    </script>
-  </body>
-</html>
+      if (blocked) {
+        anchor = { track, slot };
+        select(track, slot, slot + 30);
+        return;
+      }
+      select(track, start, end);
+      anchor = null;
+    });
+  });
+
+  form?.querySelector("[data-clear]")?.addEventListener("click", () => {
+    clearPressed();
+    anchor = null;
+    form.hidden = true;
+  });
+</script>
