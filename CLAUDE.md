@@ -2,8 +2,11 @@
 
 ## Sources of truth
 - `plan.md` is authoritative for rules, labels, copy, states and behaviour.
-  The `reference images/` are layout/visual references only; where they
-  disagree with `plan.md` (e.g. the invitation typo), `plan.md` wins.
+- The `reference images/` are authoritative for the visual result (user
+  instruction): layout, spacing, colour, typography, component shapes.
+  Match them closely at 1440px and 390px and compare screenshots side by
+  side before calling a screen done. Only wording and behaviour defer to
+  `plan.md` (e.g. the invitation typo; the required break/shortfall row).
 - The Crit 7 brief on the course site is the grading contract; it is marked
   Draft, so recheck it before submission.
 - Never read or reuse the Assignment 2 repo in the parent directory.
