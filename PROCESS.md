@@ -72,11 +72,26 @@ partial bookings, and the invariants on dynamic routes.
 - *A bug found by the spec.* The "latest invitation" was picked by
   timestamp, so an aged invitation hid a newer one. It now uses insertion
   order.
+- *A bug I found on the deployed site.* As Alex Chen, clicking **Accept
+  segment** showed "Invitation declined". I reported it:
+
+  > 目前部署的网站出现了一个按钮问题，当我切换到Alex Chen的界面点击accept segment后，弹出的提示是invitation declined
+
+  Two defects combined. The double-submit guard disabled buttons inside the
+  `submit` handler, and a disabled submitter is dropped from the form data,
+  so `decision=accept` never reached the server. The endpoint then treated
+  a missing decision as a decline. A scripted real-browser click reproduced
+  it on the live site. The HTTP spec had missed it because it posts forms
+  directly and never runs the page script. The fix in
+  [`f2ad769`](https://github.com/comp4020-agentic-coding-studio/comp4020-crit7-aurorasundev/commit/f2ad769)
+  requires an explicit accept or decline, and the guard now blocks
+  resubmission with a flag. A regression test covers the endpoint, and every
+  main button was re-clicked in a real browser.
 - *Tooling.* `drizzle-kit generate` needs an interactive answer when a table
   is dropped and others created at once. We split it into two migrations
   (create, then drop) instead of hand-editing SQL.
 
-**How I knew it was right.** `pnpm check` (typecheck, build, 57 tests) stayed
+**How I knew it was right.** `pnpm check` (typecheck, build, 58 tests) stayed
 green before every commit. After deploying I ran the CI's post-deploy checks
 by hand (200, SSE bytes, same-origin POST accepted, cross-site POST refused,
 no broken internal links). I then ran the three-hour team story on the live
