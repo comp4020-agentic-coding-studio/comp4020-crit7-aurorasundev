@@ -6,8 +6,9 @@ Study Room Planner: a prototype for one slice of ANU Library room booking.
 It compares rooms across Chifley, Hancock, Menzies and Law in one view,
 builds a multi-segment plan, lets a teammate accept responsibility for a
 segment through an in-app invitation, and confirms the plan server-side in
-one all-or-nothing transaction. It is live at
-<https://comp4020-crit7-aurorasundev.fly.dev>. `README.md` says what the app
+one all-or-nothing transaction. The home page is a labelled mock-up of
+today's ANU Library Bookings page, with the planner added where a student
+would meet it. It is live at <https://comp4020-crit7-aurorasundev.fly.dev>. `README.md` says what the app
 is and what "good" means for it.
 
 ## How I got here
@@ -91,12 +92,37 @@ partial bookings, and the invariants on dynamic routes.
   is dropped and others created at once. We split it into two migrations
   (create, then drop) instead of hand-editing SQL.
 
-**How I knew it was right.** `pnpm check` (typecheck, build, 58 tests) stayed
+**Framing it as a real improvement.** After the planner was live, I wanted a
+marker to see it the way a student would, starting from the page they
+already use:
+
+> 在目前的网站中添加一个和目前ANU 的booking page一样的首页 官方网址参考：https://anu.libcal.com/，然后将Study room planner这个功能link 接口放入首页中的合适且显眼的位置，模拟真实的改进场景
+
+The agent read anu.libcal.com and rebuilt its structure: the heading, one
+"Book in … Library" button per library, and the published booking rules.
+It also drew a line that I kept. The copy lives on a public `fly.dev` URL,
+so it uses no ANU banner, crest or login. A strip says it is a course
+prototype and links the real site, and the Research Appointment button goes
+to the real site. `CLAUDE.md` now records that rule, and the spec checks for
+the notice and for the absence of a login form. The planner moved to
+`/search` and appears in three places: a "New · Proposed improvement" card
+directly under the intro, a cross-library quick search beside it, and the
+four library buttons. Those buttons now open the unified planner already
+filtered to that library, which is the improvement itself: students start
+from the library they know but land in one view. axe caught the prototype
+strip sitting outside any landmark, so it moved into the header. The change
+is [`c7a55f6`](https://github.com/comp4020-agentic-coding-studio/comp4020-crit7-aurorasundev/commit/c7a55f6),
+and I checked it on the live site with the same smoke checks and
+real-browser clicks as before.
+
+**How I knew it was right.** `pnpm check` (typecheck, build, 68 tests at the end) stayed
 green before every commit. After deploying I ran the CI's post-deploy checks
 by hand (200, SSE bytes, same-origin POST accepted, cross-site POST refused,
 no broken internal links). I then ran the three-hour team story on the live
 site: compose, invite, accept as Alex Chen, confirm, reload. Both
 reservations persisted, and I reset the demo data afterwards.
+
+![Home page mock-up at 1440px with the planner card under the intro](docs/home-desktop.png)
 
 ![Search page at 1440px after adding the Chifley 2.3 → 2.5 split](docs/search-desktop.png)
 
