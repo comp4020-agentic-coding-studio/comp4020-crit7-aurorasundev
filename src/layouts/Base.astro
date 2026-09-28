@@ -161,10 +161,18 @@ const links = [
       addEventListener("pageshow", (event) => {
         if ((event as PageTransitionEvent).persisted && !source) connect();
       });
+      // Block a second submit without disabling buttons synchronously: a
+      // disabled submitter is dropped from the form data, which would lose
+      // name/value pairs such as decision=accept.
       document.querySelectorAll<HTMLFormElement>("form[data-once]").forEach((form) => {
-        form.addEventListener("submit", () => {
-          form.querySelectorAll<HTMLButtonElement>("button[type=submit], button:not([type])").forEach((b) => {
-            b.disabled = true;
+        form.addEventListener("submit", (event) => {
+          if (form.dataset.submitting) {
+            event.preventDefault();
+            return;
+          }
+          form.dataset.submitting = "true";
+          setTimeout(() => {
+            form.querySelectorAll<HTMLButtonElement>("button").forEach((b) => b.setAttribute("aria-disabled", "true"));
           });
         });
       });

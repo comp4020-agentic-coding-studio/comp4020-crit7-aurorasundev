@@ -1,10 +1,14 @@
 import type { APIRoute } from "astro";
-import { respond } from "../../../../lib/actions";
+import { ActionError, respond } from "../../../../lib/actions";
 import { runAction, str } from "../../../../lib/http";
 
 export const POST: APIRoute = (context) =>
   runAction(context, (form) => {
-    const accept = str(form, "decision") === "accept";
+    const decision = str(form, "decision");
+    if (decision !== "accept" && decision !== "decline") {
+      throw new ActionError("Choose Accept segment or Decline.");
+    }
+    const accept = decision === "accept";
     respond(context.locals.user.id, context.params.id ?? "", accept);
     return {
       notice: accept

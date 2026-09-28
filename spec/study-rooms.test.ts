@@ -262,6 +262,14 @@ describe("collaboration", () => {
     expect(status.last_error).toContain("reserved by someone else");
   });
 
+  it("an answer without an explicit decision changes nothing", async () => {
+    const { invitationId } = await teamPlanWithInvite();
+    const blank = await post(`/api/invitations/${invitationId}/respond`, { back: "/" }, B);
+    expect(blank.error).toContain("Choose Accept segment or Decline");
+    const row = db().prepare("select status from invitations where id = ?").get(invitationId) as { status: string };
+    expect(row.status).toBe("pending");
+  });
+
   it("declined and expired invitations are shown and can be re-sent", async () => {
     const { planId, segmentId, invitationId } = await teamPlanWithInvite();
     expect((await post(`/api/invitations/${invitationId}/respond`, { decision: "decline", back: "/" }, B)).error).toBeNull();
