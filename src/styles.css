@@ -2410,3 +2410,60 @@ input[type="checkbox"] {
     flex: 1;
   }
 }
+
+/* ---------- requested start/end marks ---------- */
+
+:root {
+  --mark: #d0312d;
+}
+
+.grid-wrap {
+  position: relative;
+}
+
+.grid-marks {
+  position: absolute;
+  top: 22px;
+  bottom: 0;
+  left: 260px;
+  right: 0;
+  pointer-events: none;
+  z-index: 3;
+}
+
+.grid-marks__line {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 0;
+  border-left: 2px solid var(--mark);
+  transform: translateX(-1px);
+}
+
+.time-head span.time-mark,
+.mini-scale span.time-mark {
+  color: var(--mark);
+  font-weight: 700;
+  transform: translateX(-50%);
+}
+
+.mini-rail {
+  position: relative;
+}
+
+.mini-rail .mini-mark {
+  position: absolute;
+  top: -4px;
+  bottom: -4px;
+  width: 0;
+  border-left: 2px solid var(--mark);
+  transform: translateX(-1px);
+}
+
+.swatch--mark {
+  width: 2px;
+  height: 16px;
+  border-radius: 0;
+  background: var(--mark);
+  margin: 0 8px;
+}

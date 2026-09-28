@@ -74,6 +74,13 @@ const pct = (min: number) => ((Math.min(Math.max(min, viewStart), viewEnd) - vie
 const slots: number[] = [];
 for (let t = viewStart; t < viewEnd; t += SLOT_MIN) slots.push(t);
 const hours = slots.filter((t) => t % 60 === 0);
+// The requested start and end are marked in red on the grid and mini-rails.
+const marks = [
+  { t: rs, label: "start" },
+  { t: re, label: "end" },
+].filter((m) => m.t >= viewStart && m.t <= viewEnd);
+const gridHours = hours.filter((t) => !marks.some((m) => m.t === t));
+const miniHours = hours.filter((t) => !marks.some((m) => Math.abs(m.t - t) < 60));
 
 type CellState = "closed" | "busy" | "selected" | "small" | "free";
 function cellState(room: RoomView, t: number): CellState {
@@ -280,6 +287,7 @@ const recordRooms = [...shownRooms].sort((a, b) => rank(a) - rank(b) || a.sort -
               ))}
             </nav>
 
+            <div class="grid-wrap">
             <table class="grid" aria-describedby="grid-help">
               <caption class="sr-only">
                 Room availability on {fmtDate(date)}, {fmtTime(viewStart)} to {fmtTime(viewEnd)}. Your requested time is {fmtRange(rs, re)}.
@@ -295,8 +303,11 @@ const recordRooms = [...shownRooms].sort((a, b) => rank(a) - rank(b) || a.sort -
                   <th scope="col" class="cap-head">Capacity</th>
                   <th scope="col" class="time-head">
                     <span class="sr-only">Time from {fmtTime(viewStart)} to {fmtTime(viewEnd)}</span>
-                    {hours.map((t) => (
+                    {gridHours.map((t) => (
                       <span aria-hidden="true" style={`left:${pct(t)}%`}>{fmtTime(t)}</span>
+                    ))}
+                    {marks.map((m) => (
+                      <span aria-hidden="true" class="time-mark" style={`left:${pct(m.t)}%`}>{fmtTime(m.t)}</span>
                     ))}
                   </th>
                 </tr>
@@ -369,11 +380,18 @@ const recordRooms = [...shownRooms].sort((a, b) => rank(a) - rank(b) || a.sort -
                   </tbody>
                 ))}
             </table>
+            <div class="grid-marks" aria-hidden="true">
+              {marks.map((m) => (
+                <span class={`grid-marks__line grid-marks__line--${m.label}`} style={`left:${pct(m.t)}%`} />
+              ))}
+            </div>
+            </div>
             <div class="section__head" style="margin-top:14px">
               <ul class="legend legend--grid" aria-label="Legend">
                 <li><span class="swatch swatch--free" aria-hidden="true"></span>Available</li>
                 <li><span class="swatch swatch--busy" aria-hidden="true"></span>Unavailable</li>
                 <li><span class="swatch swatch--selected" aria-hidden="true"></span>Selected</li>
+                <li><span class="swatch swatch--mark" aria-hidden="true"></span>Requested start and end ({fmtRange(rs, re)})</li>
               </ul>
               <p class="utility grid-help" id="grid-help" style="margin:0">
                 Click a start and an end slot in one room, then Add to plan. Click a selected block to remove it.
@@ -426,13 +444,19 @@ const recordRooms = [...shownRooms].sort((a, b) => rank(a) - rank(b) || a.sort -
                         </div>
                         <div class="mini" aria-hidden="true">
                           <div class="mini-scale">
-                            {hours.map((t) => <span style={`left:${pct(t)}%`}>{fmtTime(t)}</span>)}
+                            {miniHours.map((t) => <span style={`left:${pct(t)}%`}>{fmtTime(t)}</span>)}
+                            {marks.map((m) => (
+                              <span class="time-mark" style={`left:${pct(m.t)}%`}>{fmtTime(m.t)}</span>
+                            ))}
                           </div>
                           <div class="mini-rail">
                             {slots.map((t) => {
                               const state = cellState(r, t);
                               return <span class={state === "selected" ? "sel" : state === "busy" ? "busy" : state === "closed" ? "closed" : ""} />;
                             })}
+                            {marks.map((m) => (
+                              <i class="mini-mark" style={`left:${pct(m.t)}%`} />
+                            ))}
                           </div>
                         </div>
                         <div class="mini-caption">
